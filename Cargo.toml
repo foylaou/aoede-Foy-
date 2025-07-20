@@ -1,11 +1,10 @@
 [package]
 name = "aoede"
 version = "0.10.0"
-authors = ["Max Isom <hi@maxisom.me>", "Zach Lagden <zach@zachlagden.uk>"]
+authors = ["Max Isom <hi@maxisom.me>"]
 edition = "2021"
 description = "A Discord music bot that streams directly from Spotify"
 license = "MIT"
-repository = "https://github.com/zachlagden/music-bot-spotify"
 keywords = ["discord", "spotify", "music", "bot"]
 categories = ["multimedia::audio"]
 
