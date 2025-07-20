@@ -22,10 +22,17 @@ pub struct Config {
     #[serde(alias = "SPOTIFY_DEVICE_NAME")]
     #[serde(default = "default_spotify_device_name")]
     pub spotify_device_name: String,
+    #[serde(alias = "CACHE_DIR")]
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: String,
 }
 
 fn default_spotify_device_name() -> String {
     "Aoede".to_string()
+}
+
+fn default_cache_dir() -> String {
+    "aoede-cache".to_string()
 }
 
 impl Config {

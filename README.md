@@ -117,21 +117,54 @@ Due to Spotify deprecating username/password authentication in 2024, the recomme
    cp credentials.json aoede-cache/
    ```
 
-5. **Run with cached credentials**:
+5. **Configure the bot**:
    ```bash
-   CACHE_DIR=aoede-cache DISCORD_TOKEN=your_token DISCORD_USER_ID=your_user_id cargo run
+   cp config.sample.toml config.toml
+   # Edit config.toml with your Discord token and user ID
+   ```
+
+6. **Run the bot**:
+   ```bash
+   cargo run
    ```
 
 ### Option 2: Username/Password (Legacy - May Not Work)
 
 **Warning**: This method is deprecated by Spotify and may fail with "Bad credentials" error.
 
-Set environment variables:
+Create a config.toml file or use environment variables:
 ```bash
+# With config.toml (recommended)
+cp config.sample.toml config.toml
+# Edit config.toml with your credentials
+cargo run
+
+# Or with environment variables
 DISCORD_TOKEN=your_token SPOTIFY_USERNAME=your_username SPOTIFY_PASSWORD=your_password DISCORD_USER_ID=your_user_id cargo run
 ```
 
-### Environment Variables
+### Configuration Options
+
+#### config.toml (Recommended)
+
+```toml
+# Required
+discord_token = "your_discord_bot_token"
+discord_user_id = 123456789
+
+# Recommended for cached credentials
+cache_dir = "aoede-cache"
+
+# Optional (legacy auth - deprecated)
+spotify_username = ""
+spotify_password = ""
+
+# Optional settings
+spotify_bot_autoplay = false
+spotify_device_name = "Aoede"
+```
+
+#### Environment Variables (Alternative)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -143,7 +176,7 @@ DISCORD_TOKEN=your_token SPOTIFY_USERNAME=your_username SPOTIFY_PASSWORD=your_pa
 | `SPOTIFY_BOT_AUTOPLAY` | No | Enable autoplay (true/false) |
 | `SPOTIFY_DEVICE_NAME` | No | Custom device name (default: "Aoede") |
 
-*Required only if not using cached credentials
+*Required only if not using cached credentials. Environment variables override config.toml values.
 
 ### Migration from Username/Password
 

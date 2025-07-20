@@ -292,11 +292,14 @@ async fn main() {
         }
     };
 
-    let mut cache_dir = None;
-
-    if let Ok(c) = env::var("CACHE_DIR") {
-        cache_dir = Some(c);
-    }
+    // Use cache_dir from config, with environment variable override
+    let cache_dir = if let Ok(c) = env::var("CACHE_DIR") {
+        Some(c)
+    } else if !config.cache_dir.is_empty() {
+        Some(config.cache_dir.clone())
+    } else {
+        None
+    };
 
     let player = Arc::new(Mutex::new(
         SpotifyPlayer::new(
