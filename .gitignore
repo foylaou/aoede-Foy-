@@ -16,3 +16,6 @@ config.toml
 
 # Development files
 CLAUDE.md
+
+# Aoede cache
+aoede-cache/
