@@ -1,38 +1,18 @@
 # Rust build artifacts
 /target/
-Cargo.lock
 
 # IDE files
 .vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
 
 # Spotify authentication
-config.toml
 credentials.json
 aoede-cache/
-/cache
-*.cache/
 
 # Authentication tools (downloaded at runtime)
 librespot-auth-x86_64-*
 
-# Logs
-*.log
-
-# Environment files
-.env
-.env.local
-
-# Temporary files
-*.tmp
-*.temp
-*~
+# Config
+config.toml
 
 # Development files
 CLAUDE.md
