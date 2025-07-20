@@ -285,7 +285,7 @@ async fn main() {
             if let MissingField(f) = error.kind {
                 println!("Missing field: '{}'", f.to_uppercase());
             } else {
-                println!("Error: {:?}", error);
+                println!("Error: {error:?}");
                 exit(2)
             }
             exit(1)
@@ -325,5 +325,5 @@ async fn main() {
     let _ = client
         .start()
         .await
-        .map_err(|why| println!("Client ended: {:?}", why));
+        .map_err(|why| println!("Client ended: {why:?}"));
 }

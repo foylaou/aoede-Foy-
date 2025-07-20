@@ -9,12 +9,15 @@ pub struct Config {
     #[serde(alias = "DISCORD_TOKEN")]
     pub discord_token: String,
     #[serde(alias = "SPOTIFY_USERNAME")]
+    #[serde(default)]
     pub spotify_username: String,
     #[serde(alias = "SPOTIFY_PASSWORD")]
+    #[serde(default)]
     pub spotify_password: String,
     #[serde(alias = "DISCORD_USER_ID")]
     pub discord_user_id: u64,
     #[serde(alias = "SPOTIFY_BOT_AUTOPLAY")]
+    #[serde(default)]
     pub spotify_bot_autoplay: bool,
     #[serde(alias = "SPOTIFY_DEVICE_NAME")]
     #[serde(default = "default_spotify_device_name")]
@@ -26,7 +29,7 @@ fn default_spotify_device_name() -> String {
 }
 
 impl Config {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Box<Error>> {
         let config: Config = Figment::new()
             .merge(Toml::file("config.toml"))
             .merge(Env::raw())

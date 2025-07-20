@@ -4,6 +4,9 @@
 
 Aoede is a Discord music bot that **directly** streams from **Spotify to Discord**. The only interface is Spotify itself.
 
+> **⚠️ IMPORTANT: Authentication Update (2024)**  
+> Spotify has deprecated username/password authentication. This fork includes support for **cached credentials** to fix authentication issues. See the [Authentication Setup](#authentication-setup) section below.
+
 **Note**: a Spotify Premium account is currently required. This is a limitation of librespot, the Spotify library Aoede uses. Facebook logins [are not supported](https://github.com/librespot-org/librespot/discussions/635).
 
 ![Demo](https://raw.githubusercontent.com/codetheweb/aoede/main/.github/demo.gif)
@@ -88,3 +91,71 @@ Requirements:
 - Cargo
 
 Run `cargo build --release`. This will produce a binary in `target/release/aoede`. Set the required environment variables (see the Docker Compose section), then run the binary.
+
+## 🔐 Authentication Setup
+
+### Option 1: Cached Credentials (Recommended)
+
+Due to Spotify deprecating username/password authentication in 2024, the recommended method is to use cached credentials:
+
+1. **Download librespot-auth**:
+   ```bash
+   wget https://github.com/dspearson/librespot-auth/releases/download/v0.1.1/librespot-auth-x86_64-linux-musl-static.tar.xz
+   tar -xf librespot-auth-x86_64-linux-musl-static.tar.xz
+   ```
+
+2. **Generate credentials**:
+   ```bash
+   ./librespot-auth-x86_64-linux-musl-static/librespot-auth --name "Aoede Bot"
+   ```
+
+3. **Select the device in Spotify**: Open Spotify on your phone/computer and select "Aoede Bot" from the device picker
+
+4. **Set up cache directory**:
+   ```bash
+   mkdir -p aoede-cache
+   cp credentials.json aoede-cache/
+   ```
+
+5. **Run with cached credentials**:
+   ```bash
+   CACHE_DIR=aoede-cache DISCORD_TOKEN=your_token DISCORD_USER_ID=your_user_id cargo run
+   ```
+
+### Option 2: Username/Password (Legacy - May Not Work)
+
+**Warning**: This method is deprecated by Spotify and may fail with "Bad credentials" error.
+
+Set environment variables:
+```bash
+DISCORD_TOKEN=your_token SPOTIFY_USERNAME=your_username SPOTIFY_PASSWORD=your_password DISCORD_USER_ID=your_user_id cargo run
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DISCORD_TOKEN` | Yes | Your Discord bot token |
+| `DISCORD_USER_ID` | Yes | Discord user ID to follow |
+| `CACHE_DIR` | Recommended | Directory containing cached Spotify credentials |
+| `SPOTIFY_USERNAME` | Optional* | Spotify username (legacy auth) |
+| `SPOTIFY_PASSWORD` | Optional* | Spotify password (legacy auth) |
+| `SPOTIFY_BOT_AUTOPLAY` | No | Enable autoplay (true/false) |
+| `SPOTIFY_DEVICE_NAME` | No | Custom device name (default: "Aoede") |
+
+*Required only if not using cached credentials
+
+### Migration from Username/Password
+
+If you were using username/password authentication:
+
+1. Follow the [cached credentials setup](#option-1-cached-credentials-recommended) above
+2. Remove `SPOTIFY_USERNAME` and `SPOTIFY_PASSWORD` environment variables
+3. Add `CACHE_DIR` environment variable pointing to your credentials directory
+
+### Troubleshooting
+
+- **"Bad credentials" error**: Use cached credentials instead of username/password
+- **"No cached credentials found"**: Ensure `credentials.json` is in your cache directory
+- **Device not showing in Spotify**: Make sure librespot-auth and Spotify are on the same network
+- **Credentials expire**: Re-run the credential generation process
