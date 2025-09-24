@@ -1,17 +1,17 @@
-# Discord bot token (required)
-discord_token = "your_discord_bot_token_here"
+# Discord 機器人權杖（必需）
+discord_token = "您的_DISCORD_機器人_權杖"
 
-# Discord user ID to follow (required)
-discord_user_id = 123456789
+# 要跟隨的 Discord 使用者 ID（必需）
+discord_user_id = 您的_DISCORD_使用者_ID
 
-# Cache directory for Spotify credentials (recommended)
+# Spotify 憑證的快取目錄（推薦）
 cache_dir = "aoede-cache"
 
-# Spotify credentials (optional - use cached credentials instead)
-# Note: Username/password auth is deprecated by Spotify as of 2024
+# Spotify 憑證（選擇性 - 請使用快取憑證代替）
+# 注意：用戶名稱/密碼身份驗證在 2024 年已被 Spotify 棄用
 spotify_username = ""
 spotify_password = ""
 
-# Optional settings
-spotify_bot_autoplay = false
-spotify_device_name = "Aoede"
+# 選擇性設定
+spotify_bot_autoplay = true
+spotify_device_name = "PUPU MUSIC BOT"

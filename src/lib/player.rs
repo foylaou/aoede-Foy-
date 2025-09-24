@@ -51,9 +51,9 @@ pub struct EmittedSink {
 
 impl EmittedSink {
     fn new() -> EmittedSink {
-        // By setting the sync_channel bound to at least the output frame size of one resampling
-        // step (1120 for a chunk size of 1024 and our frequency settings) the number of
-        // synchronizations needed between EmittedSink::write and EmittedSink::read can be reduced.
+        // 通過將 sync_channel 的限制設定為至少一次重新取樣步驟的輸出幀大小
+        // （在我們的頻率設定下，區塊大小為 1024 時為 1120），
+        // 可以減少 EmittedSink::write 和 EmittedSink::read 之間所需的同步次數。
         let (sender, receiver) = sync_channel::<[f32; 2]>(1120);
 
         let resampler = FftFixedInOut::<f32>::new(
@@ -135,8 +135,8 @@ impl io::Read for EmittedSink {
         if buff.len() < sample_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "EmittedSink does not support read buffer too small to guarantee \
-                holding one audio sample (8 bytes)",
+                "EmittedSink 不支援太小的讀取緩衝區，無法保證 \
+                容納一個音頻樣本（8 位元組）",
             ));
         }
 
@@ -145,8 +145,8 @@ impl io::Read for EmittedSink {
         let mut bytes_written = 0;
         while bytes_written + (sample_size - 1) < buff.len() {
             if bytes_written == 0 {
-                // We can not return 0 bytes because songbird then thinks that the track has ended,
-                // therefore block until at least one stereo data set can be returned.
+                // 我們不能返回 0 位元組，因為 songbird 會認為曲目已結束，
+                // 因此阻塞直到至少可以返回一個立體聲數據集。
 
                 let sample = receiver.recv().unwrap();
                 LittleEndian::write_f32_into(
@@ -226,26 +226,26 @@ impl SpotifyPlayer {
         )
         .ok();
 
-        // Try to load credentials from cache first
+        // 首先嘗試從快取中載入憑證
         let credentials = if let Some(ref cache) = cache {
             match cache.credentials() {
                 Some(cached_creds) => {
-                    println!("Using cached credentials");
+                    println!("使用快取憑證");
                     cached_creds
                 }
                 None => {
-                    println!("No cached credentials found, trying username/password");
+                    println!("未找到快取憑證，嘗試使用者名稱/密碼");
                     Credentials::with_password(username, password)
                 }
             }
         } else {
-            println!("No cache available, using username/password");
+            println!("沒有可用的快取，使用使用者名稱/密碼");
             Credentials::with_password(username, password)
         };
 
         let (session, _) = Session::connect(session_config, credentials, cache, false)
             .await
-            .expect("Error creating session");
+            .expect("建立工作階段錯誤");
 
         let player_config = PlayerConfig {
             bitrate: quality,

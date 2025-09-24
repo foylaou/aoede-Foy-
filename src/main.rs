@@ -38,8 +38,8 @@ impl TypeMapKey for ConfigKey {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, _ctx: Context, ready: Ready) {
-        println!("Ready!");
-        println!("Invite me with https://discord.com/api/oauth2/authorize?client_id={}&permissions=36700160&scope=bot", ready.user.id);
+        println!("就緒！");
+        println!("使用以下連結邀請我： https://discord.com/api/oauth2/authorize?client_id={}&permissions=36700160&scope=bot", ready.user.id);
     }
 
     async fn cache_ready(&self, ctx: Context, guilds: Vec<id::GuildId>) {
@@ -48,12 +48,12 @@ impl EventHandler for Handler {
         let player = data.get::<SpotifyPlayerKey>().unwrap().clone();
         let config = data.get::<ConfigKey>().unwrap().clone();
 
-        // Handle case when user is in VC when bot starts
+        // 處理機器人啟動時使用者已在語音頻道中的情況
         for guild_id in guilds {
             let guild = ctx
                 .cache
                 .guild(guild_id)
-                .expect("Could not find guild in cache.");
+                .expect("無法在快取中找到公會。");
 
             let channel_id = guild
                 .voice_states
@@ -62,7 +62,7 @@ impl EventHandler for Handler {
             drop(guild);
 
             if channel_id.is_some() {
-                // Enable casting
+                // 啟用投播
                 player.lock().await.enable_connect().await;
                 break;
             }
@@ -70,7 +70,7 @@ impl EventHandler for Handler {
 
         let c = ctx.clone();
 
-        // Handle Spotify events
+        // 處理 Spotify 事件
         tokio::spawn(async move {
             loop {
                 let channel = player.lock().await.event_channel.clone().unwrap();
@@ -79,7 +79,7 @@ impl EventHandler for Handler {
                 let event = match receiver.recv().await {
                     Some(e) => e,
                     None => {
-                        // Busy waiting bad but quick and easy
+                        // 忙碨等待不好但快速簡單
                         sleep(Duration::from_millis(256)).await;
                         continue;
                     }
@@ -91,7 +91,7 @@ impl EventHandler for Handler {
 
                         let manager = songbird::get(&c)
                             .await
-                            .expect("Songbird Voice client placed in at initialization.")
+                            .expect("在初始化時已放入 Songbird 語音客戶端。")
                             .clone();
 
                         for guild_id in c.cache.guilds() {
@@ -102,21 +102,21 @@ impl EventHandler for Handler {
                     PlayerEvent::Started { .. } => {
                         let manager = songbird::get(&c)
                             .await
-                            .expect("Songbird Voice client placed in at initialization.")
-                            .clone();
+                            .expect("在初始化時已放入 Songbird 語音客戶端。");
 
+                        // 通過使用者 ID 搜尋公會和頻道 ID
                         // Search for guild and channel ids by user id
                         let Some((guild_id, channel_id)) =
                             c.cache.guilds().iter().find_map(|gid| {
                                 c.cache
                                     .guild(gid)
-                                    .expect("Could not find guild in cache.")
+                                    .expect("無法在快取中找到公會。")
                                     .voice_states
                                     .get(&config.discord_user_id.into())
                                     .map(|state| (gid.to_owned(), state.channel_id.unwrap()))
                             })
                         else {
-                            println!("Could not find user in VC.");
+                            println!("無法在語音頻道中找到使用者。");
                             continue;
                         };
 
@@ -142,7 +142,7 @@ impl EventHandler for Handler {
 
                             handler.play_only_source(source);
                         } else {
-                            println!("Could not fetch guild by ID.");
+                            println!("無法根據 ID 獲取公會。");
                         }
                     }
 
@@ -195,23 +195,23 @@ impl EventHandler for Handler {
 
         let player = data.get::<SpotifyPlayerKey>().unwrap();
 
-        // If user just connected
+        // 如果使用者剛剛連接
         if old.clone().is_none() {
-            // Enable casting
+            // 啟用投播
             player.lock().await.enable_connect().await;
             return;
         }
 
-        // If user disconnected
+        // 如果使用者斷開連接
         if old.clone().unwrap().channel_id.is_some() && new.channel_id.is_none() {
-            // Disable casting
+            // 禁用投播
             ctx.invisible().await;
             player.lock().await.disable_connect().await;
 
-            // Disconnect
+            // 斷開連接
             let manager = songbird::get(&ctx)
                 .await
-                .expect("Songbird Voice client placed in at initialization.")
+                .expect("在初始化時已放入 Songbird 語音客戶端。")
                 .clone();
 
             let _handler = manager.remove(new.guild_id.unwrap()).await;
@@ -219,13 +219,13 @@ impl EventHandler for Handler {
             return;
         }
 
-        // If user moved channels
+        // 如果使用者移動頻道
         if old.clone().unwrap().channel_id.unwrap() != new.channel_id.unwrap() {
             let bot_id = ctx.cache.current_user_id();
 
-            // A bit hacky way to get old guild id because
-            // its not present when switching voice channels
-            // for the first time for some reason
+            // 一個略帶黑客風格的方法來獲取舊公會 ID，因為
+            // 出於某種原因，在首次切換語音頻道時
+            // 它不存在
             let old_guild_id = match old.clone().unwrap().guild_id {
                 Some(gid) => gid,
                 None => ctx
@@ -255,7 +255,7 @@ impl EventHandler for Handler {
             if Option::is_some(&bot_channel) {
                 let manager = songbird::get(&ctx)
                     .await
-                    .expect("Songbird Voice client placed in at initialization.")
+                .expect("在初始化時已放入 Songbird 語音客戶端。")
                     .clone();
 
                 if old_guild_id != new.guild_id.unwrap() {
@@ -281,18 +281,18 @@ async fn main() {
     let config = match Config::new() {
         Ok(config) => config,
         Err(error) => {
-            println!("Couldn't read config");
+            println!("無法讀取配置");
             if let MissingField(f) = error.kind {
-                println!("Missing field: '{}'", f.to_uppercase());
+                println!("缺少欄位：'{}'", f.to_uppercase());
             } else {
-                println!("Error: {error:?}");
+                println!("錯誤：{error:?}");
                 exit(2)
             }
             exit(1)
         }
     };
 
-    // Use cache_dir from config, with environment variable override
+    // 使用配置中的 cache_dir，環境變數可以覆蓋
     let cache_dir = if let Ok(c) = env::var("CACHE_DIR") {
         Some(c)
     } else if !config.cache_dir.is_empty() {
@@ -323,10 +323,10 @@ async fn main() {
     .type_map_insert::<ConfigKey>(config)
     .register_songbird()
     .await
-    .expect("Err creating client");
+    .expect("建立客戶端錯誤");
 
     let _ = client
         .start()
         .await
-        .map_err(|why| println!("Client ended: {why:?}"));
+        .map_err(|why| println!("客戶端結束：{why:?}"));
 }
