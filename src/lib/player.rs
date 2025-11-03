@@ -1,5 +1,4 @@
-use librespot::connect::spirc::Spirc;
-use librespot::connect::config::ConnectConfig;
+use librespot::connect::{Spirc, ConnectConfig};
 use librespot::core::{
     authentication::Credentials,
     cache::Cache,
@@ -289,7 +288,7 @@ impl SpotifyPlayer {
         let mixer = Arc::new(SoftMixer::open(MixerConfig {
             volume_ctrl: VolumeCtrl::Linear,
             ..MixerConfig::default()
-        }));
+        }).expect("Failed to open SoftMixer"));
 
         let player = Player::new(
             player_config.clone(),
@@ -321,14 +320,14 @@ impl SpotifyPlayer {
             println!("[Spirc] Spotify Connect 已經啟用，跳過");
             return;
         }
-
         println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
             device_type: DeviceType::AudioDongle,
             is_group: false,
-            initial_volume: None,
-            has_volume_ctrl: true,
+            initial_volume: u16::MAX / 2,
+            disable_volume: false,
+            volume_steps: 0,
         };
 
         // 使用已存在的 player

@@ -13,7 +13,7 @@ name = "reauth"
 path = "examples/reauth.rs"
 
 [dependencies]
-librespot = {version = "0.5", default-features = false, features = ["with-dns-sd"]}
+librespot = {version = "0.7.1", default-features = false, features = ["with-dns-sd","native-tls",]}
 songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
 symphonia = { version = "0.5", features = ["all"] }
 rustls = { version = "0.23", features = ["ring"] }

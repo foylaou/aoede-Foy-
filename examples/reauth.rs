@@ -30,7 +30,7 @@ async fn main() {
     println!("正在啟動 Discovery 服務...");
     println!();
 
-    let device_name = "Aoede Auth";
+    let device_name = "PUPU MUSIC BOT";
     let device_id = "aoede-reauth-device";
 
     let mut discovery = Discovery::builder(device_id, "fa-63-0e-75-00-01")
