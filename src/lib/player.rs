@@ -1,8 +1,9 @@
 use librespot::connect::spirc::Spirc;
+use librespot::connect::config::ConnectConfig;
 use librespot::core::{
     authentication::Credentials,
     cache::Cache,
-    config::{ConnectConfig, DeviceType, SessionConfig},
+    config::{DeviceType, SessionConfig},
     session::Session,
 };
 use librespot::playback::{
@@ -28,17 +29,19 @@ use std::{io, mem};
 
 use byteorder::{ByteOrder, LittleEndian};
 use rubato::{FftFixedInOut, Resampler};
-use songbird::input::reader::MediaSource;
+use songbird::input::RawAdapter;
+use symphonia::core::io::MediaSource;
 
 pub struct SpotifyPlayer {
     player_config: PlayerConfig,
     pub emitted_sink: EmittedSink,
     pub session: Session,
     pub spirc: Option<Box<Spirc>>,
-    pub event_channel: Option<Arc<tokio::sync::Mutex<PlayerEventChannel>>>,
-    mixer: Box<SoftMixer>,
+    pub player: Option<Arc<Player>>,
+    mixer: Arc<SoftMixer>,
     pub bot_autoplay: bool,
     pub device_name: String,
+    credentials: Credentials,
 }
 
 pub struct EmittedSink {
@@ -81,24 +84,35 @@ impl EmittedSink {
 
 impl audio_backend::Sink for EmittedSink {
     fn start(&mut self) -> SinkResult<()> {
+        println!("[音訊] Sink 啟動");
         Ok(())
     }
 
     fn stop(&mut self) -> SinkResult<()> {
+        println!("[音訊] Sink 停止");
         Ok(())
     }
 
     fn write(&mut self, packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
+        let samples = match packet.samples() {
+            Ok(s) => s,
+            Err(e) => {
+                println!("[音訊警告] 無法獲取音訊樣本: {:?}", e);
+                return Ok(());
+            }
+        };
+
         let frames_needed = self.resampler_input_frames_needed;
         let mut input_buffer = self.input_buffer.lock().unwrap();
 
         let mut resampler = self.resampler.lock().unwrap();
 
-        let mut resampled_buffer = resampler.output_buffer_allocate();
+        let mut resampled_buffer = resampler.output_buffer_allocate(true);
 
-        for c in packet.samples().unwrap().chunks_exact(2) {
+        for c in samples.chunks_exact(2) {
             input_buffer.0.push(c[0] as f32);
             input_buffer.1.push(c[1] as f32);
+
             if input_buffer.0.len() == frames_needed {
                 resampler
                     .process_into_buffer(
@@ -121,6 +135,15 @@ impl audio_backend::Sink for EmittedSink {
                         .send([resampled_buffer[0][i], resampled_buffer[1][i]])
                         .unwrap()
                 }
+            }
+        }
+
+        // 只在每 100 次寫入時打印一次，避免日誌過多
+        static mut WRITE_COUNT: usize = 0;
+        unsafe {
+            WRITE_COUNT += 1;
+            if WRITE_COUNT % 100 == 0 {
+                println!("[音訊] 已寫入 {} 批次音訊樣本", WRITE_COUNT);
             }
         }
 
@@ -162,6 +185,15 @@ impl io::Read for EmittedSink {
                 break;
             }
             bytes_written += sample_size;
+        }
+
+        // 每 100 次讀取打印一次
+        static mut READ_COUNT: usize = 0;
+        unsafe {
+            READ_COUNT += 1;
+            if READ_COUNT % 100 == 0 {
+                println!("[音訊] Discord 已讀取 {} 批次，本次 {} 位元組", READ_COUNT, bytes_written);
+            }
         }
 
         Ok(bytes_written)
@@ -243,9 +275,7 @@ impl SpotifyPlayer {
             Credentials::with_password(username, password)
         };
 
-        let (session, _) = Session::connect(session_config, credentials, cache, false)
-            .await
-            .expect("建立工作階段錯誤");
+        let session = Session::new(session_config, cache);
 
         let player_config = PlayerConfig {
             bitrate: quality,
@@ -256,68 +286,94 @@ impl SpotifyPlayer {
 
         let cloned_sink = emitted_sink.clone();
 
-        let mixer = Box::new(SoftMixer::open(MixerConfig {
+        let mixer = Arc::new(SoftMixer::open(MixerConfig {
             volume_ctrl: VolumeCtrl::Linear,
             ..MixerConfig::default()
         }));
 
-        let (_player, rx) = Player::new(
+        let player = Player::new(
             player_config.clone(),
             session.clone(),
             mixer.get_soft_volume(),
             move || Box::new(cloned_sink),
         );
 
+        println!("[初始化] SpotifyPlayer 創建完成，Session 尚未連接");
+
         SpotifyPlayer {
             player_config,
             emitted_sink,
             session,
             spirc: None,
-            event_channel: Some(Arc::new(tokio::sync::Mutex::new(rx))),
+            player: Some(player),
             mixer,
             bot_autoplay,
             device_name,
+            credentials,
         }
     }
 
     pub async fn enable_connect(&mut self) {
+        println!("[Spirc] 準備啟用 Spotify Connect...");
+
+        // 如果 Spirc 已經啟用，跳過
+        if self.spirc.is_some() {
+            println!("[Spirc] Spotify Connect 已經啟用，跳過");
+            return;
+        }
+
+        println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
             device_type: DeviceType::AudioDongle,
+            is_group: false,
             initial_volume: None,
             has_volume_ctrl: true,
-            autoplay: self.bot_autoplay,
         };
 
-        let cloned_sink = self.emitted_sink.clone();
+        // 使用已存在的 player
+        let player_arc = if let Some(ref existing_player) = self.player {
+            println!("[Spirc] 使用現有的 Player");
+            existing_player.clone()
+        } else {
+            println!("[Spirc] 錯誤：Player 尚未初始化");
+            return;
+        };
 
-        let (player, player_events) = Player::new(
-            self.player_config.clone(),
+        println!("[Spirc] 調用 Spirc::new()（這會建立 Session 連接）...");
+
+        match Spirc::new(
+            config,
             self.session.clone(),
-            self.mixer.get_soft_volume(),
-            move || Box::new(cloned_sink),
-        );
+            self.credentials.clone(),
+            player_arc,
+            self.mixer.clone(),
+        ).await {
+            Ok((spirc, task)) => {
+                println!("[Spirc] ✓ Spirc::new() 成功");
+                let handle = tokio::runtime::Handle::current();
+                handle.spawn(async move {
+                    println!("[Spirc] Spirc task 開始運行");
+                    task.await;
+                    println!("[Spirc] Spirc task 結束");
+                });
 
-        let cloned_session = self.session.clone();
-
-        let (spirc, task) = Spirc::new(config, cloned_session, player, self.mixer.clone());
-
-        let handle = tokio::runtime::Handle::current();
-        handle.spawn(async {
-            task.await;
-        });
-
-        self.spirc = Some(Box::new(spirc));
-
-        let mut channel_lock = self.event_channel.as_ref().unwrap().lock().await;
-        *channel_lock = player_events;
+                self.spirc = Some(Box::new(spirc));
+                println!("[Spirc] ✓ Spotify Connect 已成功啟用");
+                println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
+            }
+            Err(e) => {
+                println!("[Spirc] ✗ 無法創建 Spirc: {:?}", e);
+                println!("[Spirc] 詳細錯誤訊息: {}", e);
+            }
+        }
     }
 
     pub async fn disable_connect(&mut self) {
         if let Some(spirc) = self.spirc.as_ref() {
-            spirc.shutdown();
-
-            self.event_channel.as_ref().unwrap().lock().await.close();
+            let _ = spirc.shutdown();
         }
+
+        self.spirc = None;
     }
 }

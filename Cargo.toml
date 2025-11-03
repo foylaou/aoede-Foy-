@@ -8,21 +8,28 @@ license = "MIT"
 keywords = ["discord", "spotify", "music", "bot"]
 categories = ["multimedia::audio"]
 
+[[example]]
+name = "reauth"
+path = "examples/reauth.rs"
+
 [dependencies]
-librespot = {version = "0.4.2", default-features = false}
-songbird = "0.3.1"
+librespot = {version = "0.5", default-features = false, features = ["with-dns-sd"]}
+songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
+symphonia = { version = "0.5", features = ["all"] }
+rustls = { version = "0.23", features = ["ring"] }
 tracing = "0.1"
-tracing-subscriber = "0.2"
+tracing-subscriber = "0.3"
 tracing-futures = "0.2"
-tokio = { version = "1.20.1", features = ["default"] }
-byteorder = "1.4.3"
+tokio = { version = "1.48", features = ["full"] }
+byteorder = "1.5"
 serde = "1.0"
 figment = { version = "0.10", features = ["toml", "env"] }
-rubato = "0.12.0"
+rubato = "0.16"
+futures-util = "0.3"
 
 [dependencies.serenity]
-version = "0.11.2"
-features = ["client"]
+version = "0.12"
+features = ["client", "voice", "gateway", "rustls_backend"]
 
 [profile.dev]
 split-debuginfo = "unpacked"

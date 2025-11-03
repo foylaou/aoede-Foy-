@@ -2,7 +2,7 @@ use std::env;
 use std::process::exit;
 
 use lib::config::Config;
-use songbird::{input, SerenityInit};
+use songbird::{input::Input, SerenityInit};
 
 mod lib {
     pub mod config;
@@ -10,7 +10,7 @@ mod lib {
 }
 use figment::error::Kind::MissingField;
 use lib::player::{SpotifyPlayer, SpotifyPlayerKey};
-use librespot::core::mercury::MercuryError;
+use librespot::core::Error as LibrespotError;
 use librespot::playback::config::Bitrate;
 use librespot::playback::player::PlayerEvent;
 use std::sync::Arc;
@@ -49,45 +49,52 @@ impl EventHandler for Handler {
         let config = data.get::<ConfigKey>().unwrap().clone();
 
         // 處理機器人啟動時使用者已在語音頻道中的情況
-        for guild_id in guilds {
-            let guild = ctx
-                .cache
-                .guild(guild_id)
-                .expect("無法在快取中找到公會。");
-
-            let channel_id = guild
-                .voice_states
-                .get(&config.discord_user_id.into())
-                .and_then(|voice_state| voice_state.channel_id);
-            drop(guild);
-
-            if channel_id.is_some() {
-                // 啟用投播
-                player.lock().await.enable_connect().await;
-                break;
+        let user_in_voice = guilds.iter().any(|guild_id| {
+            if let Some(guild) = ctx.cache.guild(*guild_id) {
+                guild
+                    .voice_states
+                    .get(&config.discord_user_id.into())
+                    .and_then(|voice_state| voice_state.channel_id)
+                    .is_some()
+            } else {
+                false
             }
+        });
+
+        if user_in_voice {
+            // 啟用投播
+            println!("檢測到使用者在語音頻道中，準備啟用 Spotify Connect...");
+            player.lock().await.enable_connect().await;
+        } else {
+            println!("使用者不在語音頻道中，不啟用 Spotify Connect");
         }
 
         let c = ctx.clone();
 
         // 處理 Spotify 事件
         tokio::spawn(async move {
-            loop {
-                let channel = player.lock().await.event_channel.clone().unwrap();
-                let mut receiver = channel.lock().await;
+            // 獲取事件通道
+            let player_arc = player.lock().await.player.clone();
+            if player_arc.is_none() {
+                println!("警告：播放器未初始化");
+                return;
+            }
 
+            let mut receiver = player_arc.unwrap().get_player_event_channel();
+
+            loop {
                 let event = match receiver.recv().await {
                     Some(e) => e,
                     None => {
-                        // 忙碨等待不好但快速簡單
-                        sleep(Duration::from_millis(256)).await;
-                        continue;
+                        // 通道關閉
+                        println!("事件通道已關閉");
+                        break;
                     }
                 };
 
                 match event {
                     PlayerEvent::Stopped { .. } => {
-                        c.set_presence(None, user::OnlineStatus::Online).await;
+                        c.set_presence(None, user::OnlineStatus::Online);
 
                         let manager = songbird::get(&c)
                             .await
@@ -99,13 +106,53 @@ impl EventHandler for Handler {
                         }
                     }
 
-                    PlayerEvent::Started { .. } => {
+                    PlayerEvent::Loading { track_id, .. } | PlayerEvent::Playing { track_id, .. } => {
+                        // 只在 Loading 時設置，避免重複
+                        if matches!(event, PlayerEvent::Loading { .. }) {
+                            println!("Spotify 正在載入音樂，準備設置 Discord 音訊...");
+                        } else {
+                            println!("Spotify 開始播放");
+                            // 在 Playing 事件中更新活動狀態
+                            let track: Result<librespot::metadata::Track, LibrespotError> =
+                                librespot::metadata::Metadata::get(
+                                    &player.lock().await.session,
+                                    &track_id,
+                                )
+                                .await;
+
+                            if let Ok(track) = track {
+                                if let Some(artist_id) = track.artists.first() {
+                                    let artist: Result<librespot::metadata::Artist, LibrespotError> =
+                                        librespot::metadata::Metadata::get(
+                                            &player.lock().await.session,
+                                            &artist_id.id,
+                                        )
+                                        .await;
+
+                                    if let Ok(artist) = artist {
+                                        let listening_to = format!("{}: {}", artist.name, track.name);
+
+                                        use serenity::all::{ActivityData, ActivityType};
+                                        let activity = ActivityData {
+                                            name: listening_to,
+                                            kind: ActivityType::Listening,
+                                            state: None,
+                                            url: None,
+                                        };
+                                        c.set_presence(
+                                            Some(activity),
+                                            user::OnlineStatus::Online,
+                                        );
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         let manager = songbird::get(&c)
                             .await
                             .expect("在初始化時已放入 Songbird 語音客戶端。");
 
                         // 通過使用者 ID 搜尋公會和頻道 ID
-                        // Search for guild and channel ids by user id
                         let Some((guild_id, channel_id)) =
                             c.cache.guilds().iter().find_map(|gid| {
                                 c.cache
@@ -120,62 +167,74 @@ impl EventHandler for Handler {
                             continue;
                         };
 
-                        let _handler = manager.join(guild_id, channel_id).await;
+                        println!("找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
 
+                        // 檢查機器人是否已經在頻道中
+                        let should_join = if let Some(handler_lock) = manager.get(guild_id) {
+                            let handler = handler_lock.lock().await;
+                            let current_channel = handler.current_channel();
+                            drop(handler);
+
+                            if let Some(ch) = current_channel {
+                                println!("機器人已在頻道 {:?} 中", ch);
+                                let songbird_channel_id: songbird::id::ChannelId = channel_id.into();
+                                ch != songbird_channel_id
+                            } else {
+                                println!("機器人不在任何頻道中，需要加入");
+                                true
+                            }
+                        } else {
+                            println!("沒有找到語音連接，需要加入");
+                            true
+                        };
+
+                        // 只在需要時加入
+                        if should_join {
+                            println!("正在加入語音頻道...");
+                            match manager.join(guild_id, channel_id).await {
+                                Ok(_) => println!("✓ 成功加入語音頻道"),
+                                Err(e) => {
+                                    println!("✗ 加入語音頻道失敗: {:?}", e);
+                                    continue;
+                                }
+                            }
+
+                            // 等待連接建立
+                            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                        }
+
+                        // 設置音訊播放
                         if let Some(handler_lock) = manager.get(guild_id) {
                             let mut handler = handler_lock.lock().await;
 
-                            let mut decoder = input::codec::OpusDecoderState::new().unwrap();
-                            decoder.allow_passthrough = false;
-
-                            let source = input::Input::new(
-                                true,
-                                input::reader::Reader::Extension(Box::new(
-                                    player.lock().await.emitted_sink.clone(),
-                                )),
-                                input::codec::Codec::FloatPcm,
-                                input::Container::Raw,
-                                None,
-                            );
+                            println!("準備音訊源...");
+                            use songbird::input::RawAdapter;
+                            let source: Input = RawAdapter::new(
+                                player.lock().await.emitted_sink.clone(),
+                                48000,
+                                2,
+                            ).into();
 
                             handler.set_bitrate(songbird::driver::Bitrate::Auto);
 
-                            handler.play_only_source(source);
+                            println!("✓ 開始播放音訊到 Discord...");
+                            let track_handle = handler.play(source.into());
+
+                            println!("音訊軌道 UUID: {:?}", track_handle.uuid());
+
+                            // 檢查播放狀態
+                            if let Ok(info) = track_handle.get_info().await {
+                                println!("播放狀態: playing={:?}, volume={:?}",
+                                    info.playing,
+                                    info.volume);
+                            }
                         } else {
-                            println!("無法根據 ID 獲取公會。");
+                            println!("✗ 無法根據 ID 獲取公會處理器");
                         }
                     }
 
                     PlayerEvent::Paused { .. } => {
-                        c.set_presence(None, user::OnlineStatus::Online).await;
-                    }
-
-                    PlayerEvent::Playing { track_id, .. } => {
-                        let track: Result<librespot::metadata::Track, MercuryError> =
-                            librespot::metadata::Metadata::get(
-                                &player.lock().await.session,
-                                track_id,
-                            )
-                            .await;
-
-                        if let Ok(track) = track {
-                            let artist: Result<librespot::metadata::Artist, MercuryError> =
-                                librespot::metadata::Metadata::get(
-                                    &player.lock().await.session,
-                                    *track.artists.first().unwrap(),
-                                )
-                                .await;
-
-                            if let Ok(artist) = artist {
-                                let listening_to = format!("{}: {}", artist.name, track.name);
-
-                                c.set_presence(
-                                    Some(gateway::Activity::listening(listening_to)),
-                                    user::OnlineStatus::Online,
-                                )
-                                .await;
-                            }
-                        }
+                        c.set_presence(None, user::OnlineStatus::Online);
                     }
 
                     _ => {}
@@ -193,11 +252,14 @@ impl EventHandler for Handler {
             return;
         }
 
+        println!("檢測到目標使用者的語音狀態變更");
+
         let player = data.get::<SpotifyPlayerKey>().unwrap();
 
         // 如果使用者剛剛連接
         if old.clone().is_none() {
             // 啟用投播
+            println!("使用者加入語音頻道，啟用 Spotify Connect...");
             player.lock().await.enable_connect().await;
             return;
         }
@@ -205,7 +267,7 @@ impl EventHandler for Handler {
         // 如果使用者斷開連接
         if old.clone().unwrap().channel_id.is_some() && new.channel_id.is_none() {
             // 禁用投播
-            ctx.invisible().await;
+            ctx.invisible();
             player.lock().await.disable_connect().await;
 
             // 斷開連接
@@ -221,7 +283,7 @@ impl EventHandler for Handler {
 
         // 如果使用者移動頻道
         if old.clone().unwrap().channel_id.unwrap() != new.channel_id.unwrap() {
-            let bot_id = ctx.cache.current_user_id();
+            let bot_id = ctx.cache.current_user().id;
 
             // 一個略帶黑客風格的方法來獲取舊公會 ID，因為
             // 出於某種原因，在首次切換語音頻道時
@@ -238,7 +300,7 @@ impl EventHandler for Handler {
                             .unwrap()
                             .channels
                             .iter()
-                            .any(|ch| ch.1.id() == new.channel_id.unwrap())
+                            .any(|ch| ch.1.id == new.channel_id.unwrap())
                     })
                     .unwrap()
                     .to_owned(),
@@ -274,6 +336,11 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
+    // 初始化 rustls 加密提供者
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     tracing_subscriber::fmt::init();
 
     let framework = StandardFramework::new();
@@ -315,7 +382,8 @@ async fn main() {
 
     let mut client = Client::builder(
         &config.discord_token,
-        gateway::GatewayIntents::non_privileged(),
+        gateway::GatewayIntents::GUILDS
+            | gateway::GatewayIntents::GUILD_VOICE_STATES,
     )
     .event_handler(Handler)
     .framework(framework)
