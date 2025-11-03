@@ -1,8 +1,8 @@
 [package]
 name = "aoede"
 version = "0.10.0"
-authors = ["Max Isom <hi@maxisom.me>"]
-edition = "2021"
+authors = ["Max Isom <hi@maxisom.me>","Foy Laou <s225002731@gmail.com>"]
+edition = "2024"
 description = "一個可以直接從 Spotify 串流的 Discord 音樂機器人"
 license = "MIT"
 keywords = ["discord", "spotify", "music", "bot"]
