@@ -139,6 +139,7 @@ dependencies = [
  "byteorder",
  "figment",
  "futures-util",
+ "lazy_static",
  "librespot",
  "rubato",
  "rustls 0.23.34",

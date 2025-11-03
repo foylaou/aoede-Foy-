@@ -16,7 +16,7 @@ use librespot::playback::{
     mixer::{Mixer, MixerConfig},
     player::Player,
 };
-
+use std::sync::{ atomic::{AtomicUsize, Ordering}};
 use serenity::prelude::TypeMapKey;
 
 use std::clone::Clone;
@@ -29,6 +29,7 @@ use std::{io, mem};
 use byteorder::{ByteOrder, LittleEndian};
 use rubato::{FftFixedInOut, Resampler};
 use symphonia::core::io::MediaSource;
+use lazy_static::lazy_static;
 
 pub struct SpotifyPlayer {
     player_config: PlayerConfig,
@@ -136,15 +137,25 @@ impl audio_backend::Sink for EmittedSink {
             }
         }
 
+
         // 只在每 10000 次寫入時打印一次，避免日誌過多
-        static mut WRITE_COUNT: usize = 0;
-        unsafe {
-            WRITE_COUNT += 1;
-            if WRITE_COUNT % 10000 == 0 {
-                println!("[音訊] 已寫入 {} 批次音訊樣本", WRITE_COUNT);
+        lazy_static! {
+            // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
+            static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        }
+
+        fn log_audio_write() {
+            // 使用 fetch_add 方法原子地增加計數器，並取得舊值
+            let previous_count = SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+            let current_count = previous_count + 1;
+
+            // 檢查是否達到 10000 的倍數 (使用當前值)
+            if current_count % 10000 == 0 {
+                println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
             }
         }
 
+        log_audio_write();
         Ok(())
     }
 }
@@ -187,13 +198,21 @@ impl io::Read for EmittedSink {
 
         // 每 10000 次讀取打印一次
         static mut READ_COUNT: usize = 0;
-        unsafe {
-            READ_COUNT += 1;
-            if READ_COUNT % 10000 == 0 {
-                println!("[音訊] Discord 已讀取 {} 批次，本次 {} 位元組", READ_COUNT, bytes_written);
+        lazy_static! {
+            // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
+            static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        }
+        fn log_audio_write() {
+            // 使用 fetch_add 方法原子地增加計數器，並取得舊值
+            let previous_count = SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+            let current_count = previous_count + 1;
+
+            // 檢查是否達到 10000 的倍數 (使用當前值)
+            if current_count % 10000 == 0 {
+                println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
             }
         }
-
+        log_audio_write();
         Ok(bytes_written)
     }
 }
