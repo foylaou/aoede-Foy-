@@ -1,11 +1,10 @@
+use futures_util::stream::StreamExt;
 use librespot::core::{
-    authentication::Credentials,
     cache::Cache,
     config::SessionConfig,
     session::Session,
 };
 use librespot::discovery::Discovery;
-use futures_util::stream::StreamExt;
 use std::env;
 
 #[tokio::main]

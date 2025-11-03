@@ -1,4 +1,4 @@
-use librespot::connect::{Spirc, ConnectConfig};
+use librespot::connect::{ConnectConfig, Spirc};
 use librespot::core::{
     authentication::Credentials,
     cache::Cache,
@@ -14,7 +14,7 @@ use librespot::playback::{
     decoder::AudioPacket,
     mixer::softmixer::SoftMixer,
     mixer::{Mixer, MixerConfig},
-    player::{Player, PlayerEventChannel},
+    player::Player,
 };
 
 use serenity::prelude::TypeMapKey;
@@ -28,7 +28,6 @@ use std::{io, mem};
 
 use byteorder::{ByteOrder, LittleEndian};
 use rubato::{FftFixedInOut, Resampler};
-use songbird::input::RawAdapter;
 use symphonia::core::io::MediaSource;
 
 pub struct SpotifyPlayer {
@@ -137,11 +136,11 @@ impl audio_backend::Sink for EmittedSink {
             }
         }
 
-        // 只在每 100 次寫入時打印一次，避免日誌過多
+        // 只在每 10000 次寫入時打印一次，避免日誌過多
         static mut WRITE_COUNT: usize = 0;
         unsafe {
             WRITE_COUNT += 1;
-            if WRITE_COUNT % 100 == 0 {
+            if WRITE_COUNT % 10000 == 0 {
                 println!("[音訊] 已寫入 {} 批次音訊樣本", WRITE_COUNT);
             }
         }
@@ -186,11 +185,11 @@ impl io::Read for EmittedSink {
             bytes_written += sample_size;
         }
 
-        // 每 100 次讀取打印一次
+        // 每 10000 次讀取打印一次
         static mut READ_COUNT: usize = 0;
         unsafe {
             READ_COUNT += 1;
-            if READ_COUNT % 100 == 0 {
+            if READ_COUNT % 10000 == 0 {
                 println!("[音訊] Discord 已讀取 {} 批次，本次 {} 位元組", READ_COUNT, bytes_written);
             }
         }

@@ -15,7 +15,6 @@ use librespot::playback::config::Bitrate;
 use librespot::playback::player::PlayerEvent;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
 
 use serenity::Client;
 

@@ -17,9 +17,7 @@ librespot = {version = "0.7.1", default-features = false, features = ["with-dns-
 songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
 symphonia = { version = "0.5", features = ["all"] }
 rustls = { version = "0.23", features = ["ring"] }
-tracing = "0.1"
 tracing-subscriber = "0.3"
-tracing-futures = "0.2"
 tokio = { version = "1.48", features = ["full"] }
 byteorder = "1.5"
 serde = "1.0"
@@ -29,7 +27,7 @@ futures-util = "0.3"
 
 [dependencies.serenity]
 version = "0.12"
-features = ["client", "voice", "gateway", "rustls_backend"]
+features = ["client", "voice", "gateway", "rustls_backend","model"]
 
 [profile.dev]
 split-debuginfo = "unpacked"
