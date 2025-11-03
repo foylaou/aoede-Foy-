@@ -10,6 +10,11 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
+    // 初始化 rustls 加密提供者
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let cache_dir = env::var("CACHE_DIR").unwrap_or_else(|_| "aoede-cache".to_string());
 
     println!("===========================================");
