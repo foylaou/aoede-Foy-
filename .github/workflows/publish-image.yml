@@ -1,11 +1,11 @@
-name: Publish Docker image on tag
+name: Publish Docker image
 
 on:
   push:
     branches:
-      - main # 推送到 main 分支時觸發
+      - main
     tags:
-      - 'v*' # 推送 tag 時觸發
+      - 'v*'
 
 env:
   REGISTRY_GHCR: ghcr.io
@@ -28,24 +28,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Convert repository name to lowercase
+      # 修正：轉換為小寫並移除尾隨的 '-'
+      - name: Convert repository name to lowercase and clean
         id: repo
         run: |
-          echo "repository=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+          REPO="${GITHUB_REPOSITORY,,}"
+          REPO="${REPO%-}"
+          echo "repository=${REPO}" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ env.REGISTRY_GHCR }}/${{ steps.repo.outputs.repository }}
+          images: ${{ env.REGISTRY_GHCR }}/${{ steps.repo.outputs.repository }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=sha
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
