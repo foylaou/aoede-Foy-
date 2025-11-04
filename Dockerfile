@@ -1,48 +1,41 @@
-FROM rust:1.91-alpine AS builder
+# Stage 1: 構建階段
+FROM rust:1.91-bookworm AS builder
 
-# 安裝所有構建依賴
-RUN apk add --no-cache \
-    alpine-sdk \
+# 安裝構建依賴
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libavahi-compat-libdnssd-dev \
+    libasound2-dev \
     cmake \
-    automake \
-    autoconf \
-    libtool \
-    musl-dev \
-    pkgconfig \
-    openssl-dev \
-    openssl-libs-static \
-    perl \
-    linux-headers \
-    avahi-dev
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 設置環境變數
-ENV OPENSSL_STATIC=1 \
-    OPENSSL_LIB_DIR=/usr/lib \
-    OPENSSL_INCLUDE_DIR=/usr/include
-
-# 直接複製所有源代碼並構建
+# 複製源代碼
 COPY . .
+
+# 構建應用
 RUN cargo build --release --bin aoede
 
-FROM alpine:3.21 AS runtime
+# Stage 2: 運行時階段
+FROM debian:bookworm-slim AS runtime
 
 # 安裝運行時依賴
-RUN apk add --no-cache \
-    libgcc \
+RUN apt-get update && apt-get install -y \
     ca-certificates \
-    avahi-compat-libdns_sd
+    libssl3 \
+    libavahi-compat-libdnssd1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # 複製二進制文件
 COPY --from=builder /app/target/release/aoede /usr/local/bin/aoede
 
-# 創建用戶
-RUN mkdir -p /data && \
-    addgroup -g 1000 aoede && \
-    adduser -D -u 1000 -G aoede aoede && \
+# 創建非 root 用戶
+RUN useradd -r -u 1000 -m -d /data -s /bin/bash aoede && \
     chown -R aoede:aoede /app /data
 
 USER aoede
