@@ -2,7 +2,7 @@ use std::env;
 use std::process::exit;
 
 use lib::config::Config;
-use songbird::{SerenityInit, input::Input};
+use songbird::{input::Input, SerenityInit};
 
 mod lib {
     pub mod config;
@@ -99,8 +99,7 @@ impl EventHandler for Handler {
                         }
                     }
 
-                    PlayerEvent::Loading { track_id, .. }
-                    | PlayerEvent::Playing { track_id, .. } => {
+                    PlayerEvent::Loading { track_id, .. } | PlayerEvent::Playing { track_id, .. } => {
                         if matches!(event, PlayerEvent::Loading { .. }) {
                             println!("Spotify 正在載入音樂,準備設置 Discord 音訊...");
                         } else {
@@ -110,29 +109,29 @@ impl EventHandler for Handler {
                                     &player.lock().await.session,
                                     &track_id,
                                 )
-                                .await;
-
-                            if let Ok(track) = track
-                                && let Some(artist_id) = track.artists.first()
-                            {
-                                let artist: Result<librespot::metadata::Artist, LibrespotError> =
-                                    librespot::metadata::Metadata::get(
-                                        &player.lock().await.session,
-                                        &artist_id.id,
-                                    )
                                     .await;
 
-                                if let Ok(artist) = artist {
-                                    let listening_to = format!("{}: {}", artist.name, track.name);
+                            if let Ok(track) = track {
+                                if let Some(artist_id) = track.artists.first() {
+                                    let artist: Result<librespot::metadata::Artist, LibrespotError> =
+                                        librespot::metadata::Metadata::get(
+                                            &player.lock().await.session,
+                                            &artist_id.id,
+                                        )
+                                            .await;
 
-                                    use serenity::all::{ActivityData, ActivityType};
-                                    let activity = ActivityData {
-                                        name: listening_to,
-                                        kind: ActivityType::Listening,
-                                        state: None,
-                                        url: None,
-                                    };
-                                    c.set_presence(Some(activity), user::OnlineStatus::Online);
+                                    if let Ok(artist) = artist {
+                                        let listening_to = format!("{}: {}", artist.name, track.name);
+
+                                        use serenity::all::{ActivityData, ActivityType};
+                                        let activity = ActivityData {
+                                            name: listening_to,
+                                            kind: ActivityType::Listening,
+                                            state: None,
+                                            url: None,
+                                        };
+                                        c.set_presence(Some(activity), user::OnlineStatus::Online);
+                                    }
                                 }
                             }
                             continue;
@@ -146,24 +145,19 @@ impl EventHandler for Handler {
                         let poise_data = data.get::<PoiseDataKey>().unwrap();
                         let config = &poise_data.config;
 
-                        let Some((guild_id, channel_id)) =
-                            c.cache.guilds().iter().find_map(|gid| {
-                                c.cache
-                                    .guild(gid)
-                                    .expect("無法在快取中找到公會。")
-                                    .voice_states
-                                    .get(&config.discord_user_id.into())
-                                    .map(|state| (gid.to_owned(), state.channel_id.unwrap()))
-                            })
-                        else {
+                        let Some((guild_id, channel_id)) = c.cache.guilds().iter().find_map(|gid| {
+                            c.cache
+                                .guild(gid)
+                                .expect("無法在快取中找到公會。")
+                                .voice_states
+                                .get(&config.discord_user_id.into())
+                                .map(|state| (gid.to_owned(), state.channel_id.unwrap()))
+                        }) else {
                             println!("無法在語音頻道中找到使用者。");
                             continue;
                         };
 
-                        println!(
-                            "找到使用者所在頻道: Guild {:?}, Channel {:?}",
-                            guild_id, channel_id
-                        );
+                        println!("找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
 
                         let should_join = if let Some(handler_lock) = manager.get(guild_id) {
                             let handler = handler_lock.lock().await;
@@ -172,8 +166,7 @@ impl EventHandler for Handler {
 
                             if let Some(ch) = current_channel {
                                 println!("機器人已在頻道 {:?} 中", ch);
-                                let songbird_channel_id: songbird::id::ChannelId =
-                                    channel_id.into();
+                                let songbird_channel_id: songbird::id::ChannelId = channel_id.into();
                                 ch != songbird_channel_id
                             } else {
                                 println!("機器人不在任何頻道中,需要加入");
@@ -202,9 +195,12 @@ impl EventHandler for Handler {
 
                             println!("準備音訊源...");
                             use songbird::input::RawAdapter;
-                            let source: Input =
-                                RawAdapter::new(player.lock().await.emitted_sink.clone(), 48000, 2)
-                                    .into();
+                            let source: Input = RawAdapter::new(
+                                player.lock().await.emitted_sink.clone(),
+                                48000,
+                                2,
+                            )
+                                .into();
 
                             handler.set_bitrate(songbird::driver::Bitrate::Auto);
 
@@ -349,7 +345,7 @@ async fn help(
         command.as_deref(),
         poise::builtins::HelpConfiguration::default(),
     )
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -391,7 +387,7 @@ async fn main() {
             config.spotify_bot_autoplay,
             config.spotify_device_name.clone(),
         )
-        .await,
+            .await,
     ));
     // 克隆用於閉包的變數
     let player_for_framework = player.clone();

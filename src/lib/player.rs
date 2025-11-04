@@ -5,7 +5,6 @@ use librespot::core::{
     config::{DeviceType, SessionConfig},
     session::Session,
 };
-use librespot::discovery::Discovery;
 use librespot::playback::{
     audio_backend,
     audio_backend::SinkResult,
@@ -17,22 +16,24 @@ use librespot::playback::{
     mixer::{Mixer, MixerConfig},
     player::Player,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{ atomic::{AtomicUsize, Ordering}};
+use librespot::discovery::Discovery;
 
 use std::clone::Clone;
-use std::io;
 use std::sync::{
+    mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex,
-    mpsc::{Receiver, SyncSender, sync_channel},
 };
+use std::{io};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures_util::StreamExt;
-use lazy_static::lazy_static;
 use rubato::{FftFixedInOut, Resampler};
 use symphonia::core::io::MediaSource;
+use lazy_static::lazy_static;
 
 pub struct SpotifyPlayer {
+
     pub emitted_sink: EmittedSink,
     pub session: Session,
     pub spirc: Option<Box<Spirc>>,
@@ -129,11 +130,14 @@ impl audio_backend::Sink for EmittedSink {
 
                 let sender = self.sender.clone();
 
-                for (left, right) in resampled_buffer[0].iter().zip(resampled_buffer[1].iter()) {
-                    sender.send([*left, *right]).unwrap()
+                for i in 0..resampled_buffer[0].len() {
+                    sender
+                        .send([resampled_buffer[0][i], resampled_buffer[1][i]])
+                        .unwrap()
                 }
             }
         }
+
 
         // 只在每 10000 次寫入時打印一次，避免日誌過多
         lazy_static! {
@@ -147,7 +151,7 @@ impl audio_backend::Sink for EmittedSink {
             let current_count = previous_count + 1;
 
             // 檢查是否達到 10000 的倍數 (使用當前值)
-            if current_count.is_multiple_of(10000) {
+            if current_count % 10000 == 0 {
                 println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
             }
         }
@@ -158,16 +162,16 @@ impl audio_backend::Sink for EmittedSink {
 }
 
 lazy_static! {
-    // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
-    static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
-}
+            // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
+            static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        }
 fn log_audio_write() {
     // 使用 fetch_add 方法原子地增加計數器，並取得舊值
     let previous_count = crate::lib::player::SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
     let current_count = previous_count + 1;
 
     // 檢查是否達到 10000 的倍數 (使用當前值)
-    if current_count.is_multiple_of(10000) {
+    if current_count % 10000 == 0 {
         println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
     }
 }
@@ -209,6 +213,8 @@ impl io::Read for EmittedSink {
 
         // 每 10000 次讀取打印一次
 
+
+
         log_audio_write();
         Ok(bytes_written)
     }
@@ -242,6 +248,7 @@ impl Clone for EmittedSink {
     }
 }
 
+
 impl SpotifyPlayer {
     pub async fn re_auth(
         cache_dir: Option<String>,
@@ -266,7 +273,7 @@ impl SpotifyPlayer {
         println!();
         println!("正在啟動 Discovery 服務...");
 
-        let device_id = format!("aoede-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let device_id = format!("aoede-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
 
         let mut discovery = Discovery::builder(device_id.clone(), "fa-63-0e-75-00-01".to_string())
             .name(device_name.to_string())
@@ -280,6 +287,7 @@ impl SpotifyPlayer {
         println!("等待 Spotify 應用連接...");
         println!("(超時時間: 5 分鐘)");
         println!();
+
 
         let credentials = discovery.next().await.expect("無法獲取憑證");
 
@@ -296,13 +304,11 @@ impl SpotifyPlayer {
                 Some(cache_path.clone()),
                 None,
             )
-            .map_err(|e| format!("無法創建 cache: {:?}", e))?;
+                .map_err(|e| format!("無法創建 cache: {:?}", e))?;
 
             let session = Session::new(SessionConfig::default(), Some(cache));
 
-            session
-                .connect(credentials.clone(), true)
-                .await
+            session.connect(credentials.clone(), true).await
                 .map_err(|e| format!("憑證驗證失敗: {:?}", e))?;
 
             println!("✓ 憑證驗證成功！");
@@ -325,6 +331,7 @@ impl SpotifyPlayer {
         cache_dir: Option<String>,
         bot_autoplay: bool,
         device_name: String,
+
     ) -> SpotifyPlayer {
         let session_config = SessionConfig::default();
 
@@ -354,8 +361,7 @@ impl SpotifyPlayer {
                     println!("未找到快取憑證,需要重新認證");
                     println!("========================================");
 
-                    match Self::re_auth(cache_dir_for_reauth, &device_name).await {
-                        //移動後使用的值 [E0382]
+                    match Self::re_auth(cache_dir_for_reauth, &device_name).await {   //移動後使用的值 [E0382]
                         Ok(creds) => {
                             println!("✓ 重新認證成功");
                             creds
@@ -395,13 +401,10 @@ impl SpotifyPlayer {
 
         let cloned_sink = emitted_sink.clone();
 
-        let mixer = Arc::new(
-            SoftMixer::open(MixerConfig {
-                volume_ctrl: VolumeCtrl::Linear,
-                ..MixerConfig::default()
-            })
-            .expect("Failed to open SoftMixer"),
-        );
+        let mixer = Arc::new(SoftMixer::open(MixerConfig {
+            volume_ctrl: VolumeCtrl::Linear,
+            ..MixerConfig::default()
+        }).expect("Failed to open SoftMixer"));
 
         let player = Player::new(
             player_config.clone(),
@@ -413,6 +416,7 @@ impl SpotifyPlayer {
         println!("[初始化] SpotifyPlayer 創建完成，Session 尚未連接");
 
         SpotifyPlayer {
+
             emitted_sink,
             session,
             spirc: None,
@@ -459,9 +463,7 @@ impl SpotifyPlayer {
             self.credentials.clone(),
             player_arc,
             self.mixer.clone(),
-        )
-        .await
-        {
+        ).await {
             Ok((spirc, task)) => {
                 println!("[Spirc] ✓ Spirc::new() 成功");
                 let handle = tokio::runtime::Handle::current();
@@ -473,10 +475,7 @@ impl SpotifyPlayer {
 
                 self.spirc = Some(Box::new(spirc));
                 println!("[Spirc] ✓ Spotify Connect 已成功啟用");
-                println!(
-                    "[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'",
-                    self.device_name
-                );
+                println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
             }
             Err(e) => {
                 println!("[Spirc] ✗ 無法創建 Spirc: {:?}", e);
