@@ -1,4 +1,4 @@
-FROM rust:1.83-alpine AS dependencies
+FROM rust:1.91-alpine AS dependencies
 
 # 安裝基礎構建依賴
 RUN apk add --no-cache \
