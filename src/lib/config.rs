@@ -1,6 +1,6 @@
 use figment::{
-    providers::{Env, Format, Toml},
     Error, Figment,
+    providers::{Env, Format, Toml},
 };
 use serde::Deserialize;
 

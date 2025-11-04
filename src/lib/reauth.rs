@@ -1,9 +1,5 @@
 use futures_util::stream::StreamExt;
-use librespot::core::{
-    cache::Cache,
-    config::SessionConfig,
-    session::Session,
-};
+use librespot::core::{cache::Cache, config::SessionConfig, session::Session};
 use librespot::discovery::Discovery;
 use std::env;
 
