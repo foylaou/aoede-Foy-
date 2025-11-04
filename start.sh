@@ -31,12 +31,7 @@ if [ ! -f "./target/release/aoede" ]; then
     echo "請先執行: cargo build --release"
     exit 1
 fi
-# 檢查權證權杖是否存在
-if [ ! -f "./aoede-cache/credentials.json" ]; then
-    echo "警告: 找不到快取憑證 (./aoede-cache/credentials.json)"
-    echo "請先執行: cargo run --example reauth"
-    exit 1
-fi
+
 
 # 創建快取目錄
 mkdir -p "$CACHE_DIR"
