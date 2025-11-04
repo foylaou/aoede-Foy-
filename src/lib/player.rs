@@ -130,9 +130,9 @@ impl audio_backend::Sink for EmittedSink {
 
                 let sender = self.sender.clone();
 
-                for i in 0..resampled_buffer[0].len() {
+                for (left, right) in resampled_buffer[0].iter().zip(resampled_buffer[1].iter()) {
                     sender
-                        .send([resampled_buffer[0][i], resampled_buffer[1][i]])
+                        .send([*left, *right])
                         .unwrap()
                 }
             }
@@ -151,7 +151,7 @@ impl audio_backend::Sink for EmittedSink {
             let current_count = previous_count + 1;
 
             // 檢查是否達到 10000 的倍數 (使用當前值)
-            if current_count % 10000 == 0 {
+            if current_count.is_multiple_of(10000) {
                 println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
             }
         }
@@ -171,7 +171,7 @@ fn log_audio_write() {
     let current_count = previous_count + 1;
 
     // 檢查是否達到 10000 的倍數 (使用當前值)
-    if current_count % 10000 == 0 {
+    if current_count.is_multiple_of(10000) {
         println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
     }
 }
@@ -273,7 +273,7 @@ impl SpotifyPlayer {
         println!();
         println!("正在啟動 Discovery 服務...");
 
-        let device_id = format!("aoede-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+        let device_id = format!("aoede-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
         let mut discovery = Discovery::builder(device_id.clone(), "fa-63-0e-75-00-01".to_string())
             .name(device_name.to_string())

@@ -111,8 +111,8 @@ impl EventHandler for Handler {
                                 )
                                     .await;
 
-                            if let Ok(track) = track {
-                                if let Some(artist_id) = track.artists.first() {
+                            if let Ok(track) = track
+                                && let Some(artist_id) = track.artists.first() {
                                     let artist: Result<librespot::metadata::Artist, LibrespotError> =
                                         librespot::metadata::Metadata::get(
                                             &player.lock().await.session,
@@ -133,7 +133,6 @@ impl EventHandler for Handler {
                                         c.set_presence(Some(activity), user::OnlineStatus::Online);
                                     }
                                 }
-                            }
                             continue;
                         }
 
