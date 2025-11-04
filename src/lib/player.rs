@@ -427,15 +427,51 @@ impl SpotifyPlayer {
             credentials,
         }
     }
-
     pub async fn enable_connect(&mut self) {
         println!("[Spirc] 準備啟用 Spotify Connect...");
-
-        // 如果 Spirc 已經啟用，跳過
+    
+        // 如果 Spirc 已經啟用，先關閉它
         if self.spirc.is_some() {
-            println!("[Spirc] Spotify Connect 已經啟用，跳過");
-            return;
+            println!("[Spirc] 關閉現有的 Spotify Connect...");
+            self.disable_connect().await;
+            
+            // 給一點時間讓資源釋放
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
+    
+        // 創建新的 Session
+        println!("[Spirc] 創建新的 Session...");
+        let session_config = SessionConfig::default();
+        
+        // 重用現有的 cache
+        let cache = Cache::new(
+            self.cache_dir.clone(),  // 您需要在 struct 中保存 cache_dir
+            self.cache_dir.clone(),
+            self.cache_dir.clone(),
+            Some(4 * 10_u64.pow(9)),
+        ).ok();
+        
+        // 創建新的 Session
+        let new_session = Session::new(session_config, cache);
+        
+        // 創建新的 Player
+        let player_config = PlayerConfig {
+            bitrate: self.quality,  // 您需要在 struct 中保存 quality
+            ..Default::default()
+        };
+        
+        let cloned_sink = self.emitted_sink.clone();
+        let new_player = Player::new(
+            player_config,
+            new_session.clone(),
+            self.mixer.get_soft_volume(),
+            move || Box::new(cloned_sink),
+        );
+        
+        // 更新 struct 中的 session 和 player
+        self.session = new_session;
+        self.player = Some(new_player.clone());
+    
         println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
@@ -445,23 +481,13 @@ impl SpotifyPlayer {
             disable_volume: false,
             volume_steps: 0,
         };
-
-        // 使用已存在的 player
-        let player_arc = if let Some(ref existing_player) = self.player {
-            println!("[Spirc] 使用現有的 Player");
-            existing_player.clone()
-        } else {
-            println!("[Spirc] 錯誤：Player 尚未初始化");
-            return;
-        };
-
-        println!("[Spirc] 調用 Spirc::new()（這會建立 Session 連接）...");
-
+    
+        println!("[Spirc] 調用 Spirc::new()...");
         match Spirc::new(
             config,
             self.session.clone(),
             self.credentials.clone(),
-            player_arc,
+            new_player,
             self.mixer.clone(),
         ).await {
             Ok((spirc, task)) => {
@@ -472,7 +498,7 @@ impl SpotifyPlayer {
                     task.await;
                     println!("[Spirc] Spirc task 結束");
                 });
-
+    
                 self.spirc = Some(Box::new(spirc));
                 println!("[Spirc] ✓ Spotify Connect 已成功啟用");
                 println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
@@ -483,7 +509,6 @@ impl SpotifyPlayer {
             }
         }
     }
-
     pub async fn disable_connect(&mut self) {
         if let Some(spirc) = self.spirc.as_ref() {
             let _ = spirc.shutdown();
