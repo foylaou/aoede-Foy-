@@ -8,12 +8,15 @@ name: Create tag & GitHub release from conventional commits
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Conventional Changelog Action
         id: changelog
@@ -21,7 +24,7 @@ jobs:
         with:
           output-file: "false"
           skip-ci: "false"
-          github-token: ${{ secrets.PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           version-file: "Cargo.toml"
           version-path: "package.version"
 
@@ -31,4 +34,4 @@ jobs:
         with:
           tag_name: ${{ steps.changelog.outputs.tag }}
           body: ${{ steps.changelog.outputs.clean_changelog }}
-          token: ${{ secrets.PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
