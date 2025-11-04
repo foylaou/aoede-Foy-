@@ -38,7 +38,7 @@ version: '3.8'
 
 services:
   aoede:
-    image: aoede-foy:latest
+    image: s225002731650/aoede-foy:latest
     container_name: aoede-bot
     restart: unless-stopped
     
