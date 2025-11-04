@@ -60,15 +60,17 @@ jobs:
         run: |
           brew install pkg-config opus cmake
           # 修正 macOS 交叉編譯時 pkg-config 找不到 Homebrew 路徑的問題
-          echo "PKG_CONFIG_PATH=$(brew --prefix)/opt/opus/lib/pkgconfig" >> $GITHUB_ENV
+          # 將路徑指向標準 Homebrew lib/pkgconfig 並設定 OPUS_LIB_DIR
+          HOMEBREW_PREFIX=$(brew --prefix)
+          echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
+          echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          # 解決 dns-sd 依賴問題：在 Windows 上安裝 Apple Bonjour SDK
-          choco install bonjour-sdk -y
-          # 設定 BONJOUR_SDK_HOME 環境變數，指向 SDK 安裝路徑，供 dns-sd Crate 鏈接使用
-          echo "BONJOUR_SDK_HOME=C:\Program Files\Bonjour SDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # 解決 dns-sd 依賴問題：由於 'bonjour-sdk' 套件已失效，我們改為禁用 pkg-config。
+          # 強制禁用 pkg-config，讓 Rust 連結器使用系統路徑中的 dnssd.lib。
+          echo "AVAHI_COMPAT_LIBDNS_SD_NO_PKG_CONFIG=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
