@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch: # 允許手動觸發
+  workflow_dispatch:
 
 jobs:
   build:
@@ -30,13 +30,19 @@ jobs:
             artifact_name: aoede-linux-x86_64
             binary_name: aoede
 
-          # macOS (Universal Binary)
-          - name: macOS Universal
+          # macOS Intel
+          - name: macOS x86_64
             os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: aoede-macos-universal
+            artifact_name: aoede-macos-x86_64
             binary_name: aoede
-            build_universal: true
+
+          # macOS ARM (Apple Silicon)
+          - name: macOS ARM64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: aoede-macos-arm64
+            binary_name: aoede
 
     steps:
       - name: Checkout repository
@@ -45,40 +51,57 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.build_universal && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.platform.target }}
+          targets: ${{ matrix.platform.target }}
 
+      # Linux 依賴
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libavahi-compat-libdnssd-dev pkg-config libasound2-dev
+          sudo apt-get install -y \
+            libavahi-compat-libdnssd-dev \
+            pkg-config \
+            libasound2-dev
 
-      # 修正 macOS opus 問題
+      # macOS 依賴
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config opus cmake nasm
+          brew install pkg-config opus cmake
           
-          # 設置環境變數讓 Rust 能找到 opus
+          # 設置環境變數
           HOMEBREW_PREFIX=$(brew --prefix)
           echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
           echo "OPUS_INCLUDE_DIR=$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
-          echo "OPUS_STATIC=1" >> $GITHUB_ENV
           
-          # 為 ARM64 編譯設置
-          echo "CFLAGS_aarch64_apple_darwin=-I$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
-          echo "LDFLAGS_aarch64_apple_darwin=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
+          # ARM64 特殊設置
+          if [ "${{ matrix.platform.target }}" = "aarch64-apple-darwin" ]; then
+            echo "CFLAGS=-I$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
+            echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
+          fi
 
-      # 修正 Windows dns-sd 問題
+      # Windows 依賴
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
+        shell: powershell
         run: |
-          # 安裝 NASM 和 CMake
-          choco install nasm cmake -y
+          # 安裝必要工具
+          choco install nasm cmake pkgconfiglite -y
           
-          # 不要設置 AVAHI_COMPAT_LIBDNS_SD_NO_PKG_CONFIG
-          # 讓系統自動處理 dns-sd
+          # 下載並安裝 Bonjour SDK
+          $url = "https://github.com/nelsonjchen/mDNSResponder/releases/download/v2019.05.08.1/Bonjour_SDK.zip"
+          $output = "$env:TEMP\Bonjour_SDK.zip"
+          $extract = "$env:TEMP\Bonjour_SDK"
+          
+          Write-Host "Downloading Bonjour SDK..."
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Expand-Archive -Path $output -DestinationPath $extract -Force
+          
+          # 設置環境變數
+          $bonjourPath = "$extract\Bonjour SDK"
+          echo "BONJOUR_SDK_HOME=$bonjourPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$bonjourPath\Lib\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -88,20 +111,8 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.platform.target }}
 
-      - name: Build ARM64 binary (macOS Universal)
-        if: matrix.platform.build_universal
-        run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Create Universal Binary (macOS)
-        if: matrix.platform.build_universal
-        run: |
-          lipo -create \
-            target/x86_64-apple-darwin/release/${{ matrix.platform.binary_name }} \
-            target/aarch64-apple-darwin/release/${{ matrix.platform.binary_name }} \
-            -output ${{ matrix.platform.artifact_name }}
-
       - name: Rename binary (Unix)
-        if: runner.os != 'Windows' && !matrix.platform.build_universal
+        if: runner.os != 'Windows'
         run: |
           cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
 
@@ -110,10 +121,10 @@ jobs:
         run: |
           copy target\${{ matrix.platform.target }}\release\${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
 
-      # 修正 GitHub Release 問題 - 只在有 tag 時上傳
+      # 只在有 tag 時上傳到 release
       - name: Upload binary to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.platform.artifact_name }}
           draft: false
@@ -121,7 +132,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 如果不是 tag，則上傳為 artifact
+      # 其他情況上傳為 artifact
       - name: Upload artifact
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
@@ -129,7 +140,44 @@ jobs:
           name: ${{ matrix.platform.artifact_name }}
           path: ${{ matrix.platform.artifact_name }}
 
-  # 只在打 tag 時更新 latest
+  # 創建 Universal Binary（可選）
+  build-macos-universal:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: aoede-macos-x86_64
+          path: ./binaries
+
+      - name: Download ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: aoede-macos-arm64
+          path: ./binaries
+
+      - name: Create Universal Binary
+        run: |
+          chmod +x ./binaries/aoede-macos-x86_64
+          chmod +x ./binaries/aoede-macos-arm64
+          lipo -create \
+            ./binaries/aoede-macos-x86_64 \
+            ./binaries/aoede-macos-arm64 \
+            -output aoede-macos-universal
+
+      - name: Upload Universal Binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aoede-macos-universal
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   update_latest_tag:
     name: Update 'latest' tag
     runs-on: ubuntu-latest
@@ -137,6 +185,7 @@ jobs:
     if: success() && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
