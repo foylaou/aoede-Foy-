@@ -1,6 +1,6 @@
 FROM rust:1.91-alpine AS dependencies
 
-# 安裝基礎構建依賴
+# 安裝所有構建依賴
 RUN apk add --no-cache \
     alpine-sdk \
     cmake \
@@ -12,9 +12,11 @@ RUN apk add --no-cache \
     openssl-dev \
     openssl-libs-static \
     perl \
-    linux-headers
+    linux-headers \
+    avahi-dev
 
-RUN cargo install cargo-chef
+# 安裝舊版 cargo-chef 避免 edition2024 問題
+RUN cargo install cargo-chef --version 0.1.67
 
 FROM dependencies AS planner
 WORKDIR /app
@@ -53,20 +55,20 @@ FROM alpine:3.21 AS runtime
 # 安裝運行時依賴
 RUN apk add --no-cache \
     libgcc \
-    ca-certificates
+    ca-certificates \
+    avahi-compat-libdns_sd
 
 WORKDIR /app
 
 # 複製二進制文件
 COPY --from=builder /app/target/release/aoede /usr/local/bin/aoede
 
-# 創建數據目錄
+# 創建數據目錄和用戶
 RUN mkdir -p /data && \
     addgroup -g 1000 aoede && \
     adduser -D -u 1000 -G aoede aoede && \
     chown -R aoede:aoede /app /data
 
-# 切換到非 root 用戶
 USER aoede
 
 ENV CACHE_DIR=/data
