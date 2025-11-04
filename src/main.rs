@@ -382,8 +382,6 @@ async fn main() {
 
     let player = Arc::new(Mutex::new(
         SpotifyPlayer::new(
-            config.spotify_username.clone(),
-            config.spotify_password.clone(),
             Bitrate::Bitrate320,
             cache_dir,
             config.spotify_bot_autoplay,

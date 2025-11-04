@@ -17,7 +17,7 @@ use librespot::playback::{
     player::Player,
 };
 use std::sync::{ atomic::{AtomicUsize, Ordering}};
-
+use librespot::discovery::Discovery;
 
 use std::clone::Clone;
 use std::sync::{
@@ -27,6 +27,7 @@ use std::sync::{
 use std::{io};
 
 use byteorder::{ByteOrder, LittleEndian};
+use futures_util::StreamExt;
 use rubato::{FftFixedInOut, Resampler};
 use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
@@ -249,9 +250,83 @@ impl Clone for EmittedSink {
 
 
 impl SpotifyPlayer {
+    pub async fn re_auth(
+        cache_dir: Option<String>,
+        device_name: &str,
+    ) -> Result<Credentials, Box<dyn std::error::Error + Send + Sync>> {
+        println!();
+        println!("===========================================");
+        println!("Spotify Discovery 認證");
+        println!("===========================================");
+        println!();
+        println!("請按照以下步驟操作：");
+        println!("1. 打開您的 Spotify 應用（手機或電腦）");
+        println!("2. 在設備列表中查找 '{}'", device_name);
+        println!("3. 選擇該設備並播放任何歌曲");
+
+        if let Some(ref path) = cache_dir {
+            println!("4. 認證完成後,憑證將保存到: {}/credentials.json", path);
+        } else {
+            println!("4. 警告：未設定快取目錄,憑證將不會被保存");
+        }
+
+        println!();
+        println!("正在啟動 Discovery 服務...");
+
+        let device_id = format!("aoede-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+
+        let mut discovery = Discovery::builder(device_id.clone(), "fa-63-0e-75-00-01".to_string())
+            .name(device_name.to_string())
+            .launch()
+            .map_err(|e| format!("無法啟動 discovery 服務: {:?}", e))?;
+
+        println!("✓ Discovery 服務已啟動");
+        println!("✓ 設備名稱: {}", device_name);
+        println!("✓ 設備 ID: {}", device_id);
+        println!();
+        println!("等待 Spotify 應用連接...");
+        println!("(超時時間: 5 分鐘)");
+        println!();
+
+
+        let credentials = discovery.next().await.expect("無法獲取憑證");
+
+        println!("✓ 收到憑證！");
+
+        // 如果有 cache_dir,驗證並保存憑證
+        if let Some(ref cache_path) = cache_dir {
+            println!();
+            println!("正在驗證並保存憑證...");
+
+            let cache = Cache::new(
+                Some(cache_path.clone()),
+                Some(cache_path.clone()),
+                Some(cache_path.clone()),
+                None,
+            )
+                .map_err(|e| format!("無法創建 cache: {:?}", e))?;
+
+            let session = Session::new(SessionConfig::default(), Some(cache));
+
+            session.connect(credentials.clone(), true).await
+                .map_err(|e| format!("憑證驗證失敗: {:?}", e))?;
+
+            println!("✓ 憑證驗證成功！");
+            println!("✓ 憑證已保存到: {}/credentials.json", cache_path);
+        } else {
+            println!();
+            println!("⚠ 警告：憑證未保存(未設定快取目錄)");
+        }
+
+        println!();
+        println!("===========================================");
+        println!("✓ 認證完成！");
+        println!("===========================================");
+        println!();
+
+        Ok(credentials)
+    }
     pub async fn new(
-        username: String,
-        password: String,
         quality: Bitrate,
         cache_dir: Option<String>,
         bot_autoplay: bool,
@@ -264,7 +339,7 @@ impl SpotifyPlayer {
         let mut cache_limit: u64 = 10;
         cache_limit = cache_limit.pow(9);
         cache_limit *= 4;
-
+        let cache_dir_for_reauth = cache_dir.clone();
         let cache = Cache::new(
             cache_dir.clone(),
             cache_dir.clone(),
@@ -274,20 +349,45 @@ impl SpotifyPlayer {
         .ok();
 
         // 首先嘗試從快取中載入憑證
+        // 獲取憑證 - 優先使用快取,沒有則強制重新認證
         let credentials = if let Some(ref cache) = cache {
             match cache.credentials() {
                 Some(cached_creds) => {
-                    println!("使用快取憑證");
+                    println!("✓ 使用快取憑證");
                     cached_creds
                 }
                 None => {
-                    println!("未找到快取憑證，嘗試使用者名稱/密碼");
-                    Credentials::with_password(username, password)
+                    println!("========================================");
+                    println!("未找到快取憑證,需要重新認證");
+                    println!("========================================");
+
+                    match Self::re_auth(cache_dir_for_reauth, &device_name).await {   //移動後使用的值 [E0382]
+                        Ok(creds) => {
+                            println!("✓ 重新認證成功");
+                            creds
+                        }
+                        Err(e) => {
+                            eprintln!("✗ 重新認證失敗: {:?}", e);
+                            eprintln!("無法繼續,程序退出");
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
         } else {
-            println!("沒有可用的快取，使用使用者名稱/密碼");
-            Credentials::with_password(username, password)
+            println!("========================================");
+            println!("警告：沒有設定快取目錄");
+            println!("========================================");
+            println!("將進行一次性認證(憑證不會被保存)");
+
+            match Self::re_auth(None, &device_name).await {
+                Ok(creds) => creds,
+                Err(e) => {
+                    eprintln!("✗ 認證失敗: {:?}", e);
+                    eprintln!("無法繼續,程序退出");
+                    std::process::exit(1);
+                }
+            }
         };
 
         let session = Session::new(session_config, cache);

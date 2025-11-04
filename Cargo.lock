@@ -150,6 +150,7 @@ dependencies = [
  "symphonia",
  "tokio",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
