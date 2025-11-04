@@ -70,14 +70,15 @@ docker run --rm -d --env-file .env codetheweb/aoede
 
 預建二進制檔案可在[發布頁面](https://github.com/codetheweb/aoede/releases)上獲取。下載適合您平台的二進制檔案，然後在終端機中：
 
-1. 有兩種選項可使 Aoede 可獲取配置值：
-	1. 將 `config.sample.toml` 檔案複製到 `config.toml` 並根據需要更新。
-	2. 使用環境變數（請參閱上方的 Docker Compose 部分）：
-		- 在 Windows 上，您可以使用 `setx DISCORD_TOKEN my-token`
-		- 在 Linux / macOS 上，您可以使用 `export DISCORD_TOKEN=my-token`
-2. 執行二進制檔案：
-	- 對於 Linux / macOS，在導航到正確目錄後執行 `./platform-latest-aoede`
-	- 對於 Windows，在導航到正確目錄後執行 `windows-latest-aoede.exe`
+```bash
+chmod +x aoede-linux-x86_64
+DISCORD_TOKEN=your token \
+DISCORD_USER_ID=your id \
+CACHE_DIR=cache \
+SPOTIFY_BOT_AUTOPLAY=true \
+SPOTIFY_DEVICE_NAME="MUSIC BOT" \
+./aoede-linux-x86_64
+```
 
 ### 從原始碼建置：
 
@@ -92,56 +93,6 @@ docker run --rm -d --env-file .env codetheweb/aoede
 
 執行 `cargo build --release`。這將在 `target/release/aoede` 中產生二進制檔案。設定所需的環境變數（請參閱 Docker Compose 部分），然後執行二進制檔案。
 
-## 🔐 身份驗證設定
-
-### 選項 1：快取憑證（推薦）
-
-由於 Spotify 在 2024 年棄用使用者名稱/密碼身份驗證，推薦的方法是使用快取憑證：
-
-1. **下載 librespot-auth**：
-   ```bash
-   wget https://github.com/dspearson/librespot-auth/releases/download/v0.1.1/librespot-auth-x86_64-linux-musl-static.tar.xz
-   tar -xf librespot-auth-x86_64-linux-musl-static.tar.xz
-   ```
-
-2. **產生憑證**：
-   ```bash
-   ./librespot-auth-x86_64-linux-musl-static/librespot-auth --name "Aoede Bot"
-   ```
-
-3. **在 Spotify 中選擇裝置**：在您的手機/電腦上開啟 Spotify，並從裝置選擇器中選擇「Aoede Bot」
-
-4. **設定快取目錄**：
-   ```bash
-   mkdir -p aoede-cache
-   cp credentials.json aoede-cache/
-   ```
-
-5. **配置機器人**：
-   ```bash
-   cp config.sample.toml config.toml
-   # 編輯 config.toml 填入您的 Discord 權杖和使用者 ID
-   ```
-
-6. **執行機器人**：
-   ```bash
-   cargo run
-   ```
-
-### 選項 2：使用者名稱/密碼（給索 - 可能無法運作）
-
-**警告**：此方法已被 Spotify 棄用，可能會因「錯誤的憑證」錯誤而失敗。
-
-建立 config.toml 檔案或使用環境變數：
-```bash
-# 使用 config.toml（推薦）
-cp config.sample.toml config.toml
-# 編輯 config.toml 填入您的憑證
-cargo run
-
-# 或使用環境變數
-DISCORD_TOKEN=your_token SPOTIFY_USERNAME=your_username SPOTIFY_PASSWORD=your_password DISCORD_USER_ID=your_user_id cargo run
-```
 
 ### 配置選項
 
@@ -152,12 +103,9 @@ DISCORD_TOKEN=your_token SPOTIFY_USERNAME=your_username SPOTIFY_PASSWORD=your_pa
 discord_token = "your_discord_bot_token"
 discord_user_id = 123456789
 
-# 对快取憑證推薦
+# 快取憑證
 cache_dir = "aoede-cache"
 
-# 選擇性（給索身份驗證 - 已棄用）
-spotify_username = ""
-spotify_password = ""
 
 # 選擇性設定
 spotify_bot_autoplay = false
@@ -171,8 +119,6 @@ spotify_device_name = "Aoede"
 | `DISCORD_TOKEN` | 是 | 您的 Discord 機器人權杖 |
 | `DISCORD_USER_ID` | 是 | 要跟隨的 Discord 使用者 ID |
 | `CACHE_DIR` | 推薦 | 包含快取 Spotify 憑證的目錄 |
-| `SPOTIFY_USERNAME` | 選擇性* | Spotify 使用者名稱（給索身份驗證） |
-| `SPOTIFY_PASSWORD` | 選擇性* | Spotify 密碼（給索身份驗證） |
 | `SPOTIFY_BOT_AUTOPLAY` | 否 | 啟用自動播放 (true/false) |
 | `SPOTIFY_DEVICE_NAME` | 否 | 自定義裝置名稱（預設："Aoede"） |
 
