@@ -7,8 +7,6 @@ on:
 
 env:
   REGISTRY_GHCR: ghcr.io
-  # IMAGE_NAME definition removed from here as 'lower' is not recognized at this level.
-  # The lowercase conversion is moved directly into the 'Extract metadata' step.
 
 jobs:
   build-and-push:
@@ -28,14 +26,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 新增步驟：轉換 repository 名稱為小寫
+      - name: Convert repository name to lowercase
+        id: repo
+        run: |
+          echo "repository=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # --- FIX: Apply 'lower()' directly within the step input ---
           images: |
-            ${{ env.REGISTRY_GHCR }}/${{ lower(github.repository) }}
-          # -----------------------------------------------------------
+            ${{ env.REGISTRY_GHCR }}/${{ steps.repo.outputs.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
