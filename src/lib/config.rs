@@ -11,7 +11,7 @@ pub struct Config {
     #[serde(alias = "DISCORD_USER_ID")]
     pub discord_user_id: u64,
     #[serde(alias = "SPOTIFY_BOT_AUTOPLAY")]
-    #[serde(default)]
+    #[serde(default = "default_false")]
     pub spotify_bot_autoplay: bool,
     #[serde(alias = "SPOTIFY_DEVICE_NAME")]
     #[serde(default = "default_spotify_device_name")]
@@ -20,13 +20,15 @@ pub struct Config {
     #[serde(default = "default_cache_dir")]
     pub cache_dir: String,
 }
-
+fn default_false() -> bool {
+    false
+}
 fn default_spotify_device_name() -> String {
-    "Aoede".to_string()
+    "PUPU MUSIC BOT".to_string()
 }
 
 fn default_cache_dir() -> String {
-    "aoede-cache".to_string()
+    "cache".to_string()
 }
 
 impl Config {
