@@ -2,11 +2,9 @@ name: Build binaries for release
 
 on:
   push:
-    branches:
-      - main # 新增：當有推送到 'main' 分支時，也觸發工作流程
     tags:
       - 'v*.*.*'
-      - 'latest' # 當推送 'latest' 標籤時觸發
+  workflow_dispatch: # 允許手動觸發
 
 jobs:
   build:
@@ -32,7 +30,7 @@ jobs:
             artifact_name: aoede-linux-x86_64
             binary_name: aoede
 
-          # macOS (Universal Binary - 兩個架構都支持)
+          # macOS (Universal Binary)
           - name: macOS Universal
             os: macos-latest
             target: x86_64-apple-darwin
@@ -55,22 +53,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libavahi-compat-libdnssd-dev pkg-config libasound2-dev
 
+      # 修正 macOS opus 問題
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config opus cmake
-          # 修正 macOS 交叉編譯時 pkg-config 找不到 Homebrew 路徑的問題
-          # 將路徑指向標準 Homebrew lib/pkgconfig 並設定 OPUS_LIB_DIR
+          brew install pkg-config opus cmake nasm
+          
+          # 設置環境變數讓 Rust 能找到 opus
           HOMEBREW_PREFIX=$(brew --prefix)
           echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
+          echo "OPUS_INCLUDE_DIR=$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
+          echo "OPUS_STATIC=1" >> $GITHUB_ENV
+          
+          # 為 ARM64 編譯設置
+          echo "CFLAGS_aarch64_apple_darwin=-I$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
+          echo "LDFLAGS_aarch64_apple_darwin=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
 
+      # 修正 Windows dns-sd 問題
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          # 解決 dns-sd 依賴問題：由於 'bonjour-sdk' 套件已失效，我們改為禁用 pkg-config。
-          # 強制禁用 pkg-config，讓 Rust 連結器使用系統路徑中的 dnssd.lib。
-          echo "AVAHI_COMPAT_LIBDNS_SD_NO_PKG_CONFIG=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # 安裝 NASM 和 CMake
+          choco install nasm cmake -y
+          
+          # 不要設置 AVAHI_COMPAT_LIBDNS_SD_NO_PKG_CONFIG
+          # 讓系統自動處理 dns-sd
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -102,41 +110,48 @@ jobs:
         run: |
           copy target\${{ matrix.platform.target }}\release\${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
 
+      # 修正 GitHub Release 問題 - 只在有 tag 時上傳
       - name: Upload binary to release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ matrix.platform.artifact_name }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 新增 Job：在所有構建成功後，將當前提交標記為 'latest'
+      # 如果不是 tag，則上傳為 artifact
+      - name: Upload artifact
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.artifact_name }}
+          path: ${{ matrix.platform.artifact_name }}
+
+  # 只在打 tag 時更新 latest
   update_latest_tag:
-    name: Update 'latest' tag to current commit
+    name: Update 'latest' tag
     runs-on: ubuntu-latest
     needs: build
-    # 邏輯變更：當 'build' 成功且 (觸發於 'v' 開頭標籤 或 觸發於 'main' 分支) 時運行
-    if: success() && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    if: success() && startsWith(github.ref, 'refs/tags/v')
     permissions:
-      contents: write # 必須要有寫入權限才能刪除和創建標籤
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        # 獲取完整歷史以便進行 Git 操作
+        with:
+          fetch-depth: 0
 
       - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Retag and Push 'latest'
+      - name: Update 'latest' tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. 刪除遠端已存在的 'latest' 標籤 (如果存在)
-          git push --delete origin latest || true 
-          
-          # 2. 創建一個新的本地 'latest' 標籤，指向當前提交 SHA
+          git push --delete origin latest || true
           git tag -f latest "${{ github.sha }}"
-          
-          # 3. 將新的 'latest' 標籤推送到遠端
           git push origin latest
