@@ -34,21 +34,33 @@ Aoede 在您加入它可以存取的語音頻道之前會顯示為離線。
 - `:latest`: 最新版本
 
 ```yaml
-version: '3.4'
+version: '3.8'
 
 services:
   aoede:
-    image: codetheweb/aoede
-    restart: always
+    image: aoede-foy:latest
+    container_name: aoede-bot
+    restart: unless-stopped
+    
     volumes:
-      - ./aoede:/data
+      # 主機路徑:容器路徑
+      - /home/Share/aoede-Foy-/aoede-cache:/data
+
     environment:
-      - DISCORD_TOKEN=
-      - SPOTIFY_USERNAME=
-      - SPOTIFY_PASSWORD=
-      - DISCORD_USER_ID=        # 您希望 Aoede 跟隨的使用者的 Discord 使用者 ID
-      - SPOTIFY_BOT_AUTOPLAY=   # 當您的音樂結束時自動播放相似歌曲 (true/false)
-      - SPOTIFY_DEVICE_NAME=
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - SPOTIFY_USERNAME=${SPOTIFY_USERNAME}
+      - SPOTIFY_PASSWORD=${SPOTIFY_PASSWORD}
+      - DISCORD_USER_ID=${DISCORD_USER_ID}
+      - SPOTIFY_DEVICE_NAME=${SPOTIFY_DEVICE_NAME:-Aoede Bot}
+      - SPOTIFY_BOT_AUTOPLAY=${SPOTIFY_BOT_AUTOPLAY:-false}
+      - CACHE_DIR=/data
+    
+    # 可選：日誌配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
 ### Docker:
