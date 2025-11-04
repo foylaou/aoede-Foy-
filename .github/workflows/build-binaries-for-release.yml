@@ -9,6 +9,8 @@ jobs:
   build:
     name: Build ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -53,8 +55,11 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config opus
-
+          brew install pkg-config opus cmake
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # 解決 dns-sd 依賴問題：在 Windows 上安裝 Apple Bonjour SDK          choco install bonjour-sdk -y
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
