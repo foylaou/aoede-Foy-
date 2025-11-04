@@ -18,7 +18,8 @@ Aoede 是一個可以**直接**從 **Spotify 串流到 Discord** 的 Discord 音
 
 ## 🏗 使用方法
 
-（提供 x86 和 arm64 映像檔。）
+提供 x86 和 arm64 Docker映像檔。
+以及 linux_x86_64 二進制檔案（binaries） && Macos_Arm 二進制檔案（binaries） 
 
 ### 注意事項：
 ⚠️ Aoede 只支援機器人權杖。提供使用者權杖將無法運作。
@@ -27,10 +28,6 @@ Aoede 在您加入它可以存取的語音頻道之前會顯示為離線。
 
 ### Docker Compose（推薦）：
 
-有各種不同的映像標籤可用：
-- `:0`: 版本 >= 0.0.0
-- `:0.5`: 版本 >= 0.5.0 且 < 0.6.0
-- `:0.5.1`: 精確的版本指定
 - `:latest`: 最新版本
 
 ```yaml
@@ -48,8 +45,6 @@ services:
 
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - SPOTIFY_USERNAME=${SPOTIFY_USERNAME}
-      - SPOTIFY_PASSWORD=${SPOTIFY_PASSWORD}
       - DISCORD_USER_ID=${DISCORD_USER_ID}
       - SPOTIFY_DEVICE_NAME=${SPOTIFY_DEVICE_NAME:-Aoede Bot}
       - SPOTIFY_BOT_AUTOPLAY=${SPOTIFY_BOT_AUTOPLAY:-false}
@@ -63,22 +58,9 @@ services:
         max-file: "3"
 ```
 
-### Docker:
-```env
-# .env
-DISCORD_TOKEN=
-SPOTIFY_USERNAME=
-SPOTIFY_PASSWORD=
-DISCORD_USER_ID=
-SPOTIFY_BOT_AUTOPLAY=
-SPOTIFY_DEVICE_NAME=
-```
 
-```bash
-docker run --rm -d --env-file .env codetheweb/aoede
-```
 
-### 預建二進制檔案：
+### 預建二進制檔案（binaries）：
 
 預建二進制檔案可在[發布頁面](https://github.com/codetheweb/aoede/releases)上獲取。下載適合您平台的二進制檔案，然後在終端機中：
 
