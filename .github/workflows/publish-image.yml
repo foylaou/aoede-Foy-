@@ -7,9 +7,8 @@ on:
 
 env:
   REGISTRY_GHCR: ghcr.io
-  # --- FIX: Force IMAGE_NAME to lowercase to comply with Docker tag reference format ---
-  IMAGE_NAME: ${{ lower(github.repository) }}
-  # -----------------------------------------------------------------------------------
+  # IMAGE_NAME definition removed from here as 'lower' is not recognized at this level.
+  # The lowercase conversion is moved directly into the 'Extract metadata' step.
 
 jobs:
   build-and-push:
@@ -33,8 +32,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
+          # --- FIX: Apply 'lower()' directly within the step input ---
           images: |
-            ${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}
+            ${{ env.REGISTRY_GHCR }}/${{ lower(github.repository) }}
+          # -----------------------------------------------------------
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
