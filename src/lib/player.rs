@@ -17,14 +17,14 @@ use librespot::playback::{
     player::Player,
 };
 use std::sync::{ atomic::{AtomicUsize, Ordering}};
-use serenity::prelude::TypeMapKey;
+
 
 use std::clone::Clone;
 use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex,
 };
-use std::{io, mem};
+use std::{io};
 
 use byteorder::{ByteOrder, LittleEndian};
 use rubato::{FftFixedInOut, Resampler};
@@ -32,7 +32,7 @@ use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
 
 pub struct SpotifyPlayer {
-    player_config: PlayerConfig,
+
     pub emitted_sink: EmittedSink,
     pub session: Session,
     pub spirc: Option<Box<Spirc>>,
@@ -160,9 +160,23 @@ impl audio_backend::Sink for EmittedSink {
     }
 }
 
+lazy_static! {
+            // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
+            static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        }
+fn log_audio_write() {
+    // 使用 fetch_add 方法原子地增加計數器，並取得舊值
+    let previous_count = crate::lib::player::SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+    let current_count = previous_count + 1;
+
+    // 檢查是否達到 10000 的倍數 (使用當前值)
+    if current_count % 10000 == 0 {
+        println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
+    }
+}
 impl io::Read for EmittedSink {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-        let sample_size = mem::size_of::<f32>() * 2;
+        let sample_size = size_of::<f32>() * 2;
 
         if buff.len() < sample_size {
             return Err(io::Error::new(
@@ -197,21 +211,9 @@ impl io::Read for EmittedSink {
         }
 
         // 每 10000 次讀取打印一次
-        static mut READ_COUNT: usize = 0;
-        lazy_static! {
-            // Ordering::Relaxed 在此處對性能影響最小，適用於簡單計數
-            static ref SAFE_WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
-        }
-        fn log_audio_write() {
-            // 使用 fetch_add 方法原子地增加計數器，並取得舊值
-            let previous_count = SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
-            let current_count = previous_count + 1;
 
-            // 檢查是否達到 10000 的倍數 (使用當前值)
-            if current_count % 10000 == 0 {
-                println!("[音訊] 安全地寫入 {} 批次音訊樣本", current_count);
-            }
-        }
+
+
         log_audio_write();
         Ok(bytes_written)
     }
@@ -245,11 +247,6 @@ impl Clone for EmittedSink {
     }
 }
 
-pub struct SpotifyPlayerKey;
-
-impl TypeMapKey for SpotifyPlayerKey {
-    type Value = Arc<tokio::sync::Mutex<SpotifyPlayer>>;
-}
 
 impl SpotifyPlayer {
     pub async fn new(
@@ -259,6 +256,7 @@ impl SpotifyPlayer {
         cache_dir: Option<String>,
         bot_autoplay: bool,
         device_name: String,
+
     ) -> SpotifyPlayer {
         let session_config = SessionConfig::default();
 
@@ -318,7 +316,7 @@ impl SpotifyPlayer {
         println!("[初始化] SpotifyPlayer 創建完成，Session 尚未連接");
 
         SpotifyPlayer {
-            player_config,
+
             emitted_sink,
             session,
             spirc: None,

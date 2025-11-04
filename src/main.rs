@@ -9,43 +9,40 @@ mod lib {
     pub mod player;
 }
 use figment::error::Kind::MissingField;
-use lib::player::{SpotifyPlayer, SpotifyPlayerKey};
+use lib::player::SpotifyPlayer;
 use librespot::core::Error as LibrespotError;
 use librespot::playback::config::Bitrate;
 use librespot::playback::player::PlayerEvent;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use serenity::Client;
-
-use serenity::prelude::TypeMapKey;
-
+use serenity::all::GatewayIntents;
 use serenity::{
     async_trait,
     client::{Context, EventHandler},
-    framework::StandardFramework,
-    model::{gateway, gateway::Ready, id, user, voice::VoiceState},
+    model::{gateway::Ready, id, user, voice::VoiceState},
 };
+
+// Poise 框架類型定義
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type PoiseContext<'a> = poise::Context<'a, Data, Error>;
+
+// 應用數據結構
+pub struct Data {
+    pub config: Config,
+    pub player: Arc<Mutex<SpotifyPlayer>>,
+}
 
 struct Handler;
 
-pub struct ConfigKey;
-impl TypeMapKey for ConfigKey {
-    type Value = Config;
-}
-
 #[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, _ctx: Context, ready: Ready) {
-        println!("就緒！");
-        println!("使用以下連結邀請我： https://discord.com/api/oauth2/authorize?client_id={}&permissions=36700160&scope=bot", ready.user.id);
-    }
-
     async fn cache_ready(&self, ctx: Context, guilds: Vec<id::GuildId>) {
         let data = ctx.data.read().await;
+        let poise_data = data.get::<PoiseDataKey>().unwrap();
 
-        let player = data.get::<SpotifyPlayerKey>().unwrap().clone();
-        let config = data.get::<ConfigKey>().unwrap().clone();
+        let player = poise_data.player.clone();
+        let config = &poise_data.config;
 
         // 處理機器人啟動時使用者已在語音頻道中的情況
         let user_in_voice = guilds.iter().any(|guild_id| {
@@ -61,18 +58,16 @@ impl EventHandler for Handler {
         });
 
         if user_in_voice {
-            // 啟用投播
-            println!("檢測到使用者在語音頻道中，準備啟用 Spotify Connect...");
+            println!("檢測到使用者在語音頻道中,準備啟用 Spotify Connect...");
             player.lock().await.enable_connect().await;
         } else {
-            println!("使用者不在語音頻道中，不啟用 Spotify Connect");
+            println!("使用者不在語音頻道中,不啟用 Spotify Connect");
         }
 
         let c = ctx.clone();
 
         // 處理 Spotify 事件
         tokio::spawn(async move {
-            // 獲取事件通道
             let player_arc = player.lock().await.player.clone();
             if player_arc.is_none() {
                 println!("警告：播放器未初始化");
@@ -85,7 +80,6 @@ impl EventHandler for Handler {
                 let event = match receiver.recv().await {
                     Some(e) => e,
                     None => {
-                        // 通道關閉
                         println!("事件通道已關閉");
                         break;
                     }
@@ -106,18 +100,16 @@ impl EventHandler for Handler {
                     }
 
                     PlayerEvent::Loading { track_id, .. } | PlayerEvent::Playing { track_id, .. } => {
-                        // 只在 Loading 時設置，避免重複
                         if matches!(event, PlayerEvent::Loading { .. }) {
-                            println!("Spotify 正在載入音樂，準備設置 Discord 音訊...");
+                            println!("Spotify 正在載入音樂,準備設置 Discord 音訊...");
                         } else {
                             println!("Spotify 開始播放");
-                            // 在 Playing 事件中更新活動狀態
                             let track: Result<librespot::metadata::Track, LibrespotError> =
                                 librespot::metadata::Metadata::get(
                                     &player.lock().await.session,
                                     &track_id,
                                 )
-                                .await;
+                                    .await;
 
                             if let Ok(track) = track {
                                 if let Some(artist_id) = track.artists.first() {
@@ -126,7 +118,7 @@ impl EventHandler for Handler {
                                             &player.lock().await.session,
                                             &artist_id.id,
                                         )
-                                        .await;
+                                            .await;
 
                                     if let Ok(artist) = artist {
                                         let listening_to = format!("{}: {}", artist.name, track.name);
@@ -138,37 +130,35 @@ impl EventHandler for Handler {
                                             state: None,
                                             url: None,
                                         };
-                                        c.set_presence(
-                                            Some(activity),
-                                            user::OnlineStatus::Online,
-                                        );
+                                        c.set_presence(Some(activity), user::OnlineStatus::Online);
                                     }
                                 }
                             }
                             continue;
                         }
+
                         let manager = songbird::get(&c)
                             .await
                             .expect("在初始化時已放入 Songbird 語音客戶端。");
 
-                        // 通過使用者 ID 搜尋公會和頻道 ID
-                        let Some((guild_id, channel_id)) =
-                            c.cache.guilds().iter().find_map(|gid| {
-                                c.cache
-                                    .guild(gid)
-                                    .expect("無法在快取中找到公會。")
-                                    .voice_states
-                                    .get(&config.discord_user_id.into())
-                                    .map(|state| (gid.to_owned(), state.channel_id.unwrap()))
-                            })
-                        else {
+                        let data = c.data.read().await;
+                        let poise_data = data.get::<PoiseDataKey>().unwrap();
+                        let config = &poise_data.config;
+
+                        let Some((guild_id, channel_id)) = c.cache.guilds().iter().find_map(|gid| {
+                            c.cache
+                                .guild(gid)
+                                .expect("無法在快取中找到公會。")
+                                .voice_states
+                                .get(&config.discord_user_id.into())
+                                .map(|state| (gid.to_owned(), state.channel_id.unwrap()))
+                        }) else {
                             println!("無法在語音頻道中找到使用者。");
                             continue;
                         };
 
                         println!("找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
 
-                        // 檢查機器人是否已經在頻道中
                         let should_join = if let Some(handler_lock) = manager.get(guild_id) {
                             let handler = handler_lock.lock().await;
                             let current_channel = handler.current_channel();
@@ -179,15 +169,14 @@ impl EventHandler for Handler {
                                 let songbird_channel_id: songbird::id::ChannelId = channel_id.into();
                                 ch != songbird_channel_id
                             } else {
-                                println!("機器人不在任何頻道中，需要加入");
+                                println!("機器人不在任何頻道中,需要加入");
                                 true
                             }
                         } else {
-                            println!("沒有找到語音連接，需要加入");
+                            println!("沒有找到語音連接,需要加入");
                             true
                         };
 
-                        // 只在需要時加入
                         if should_join {
                             println!("正在加入語音頻道...");
                             match manager.join(guild_id, channel_id).await {
@@ -198,11 +187,9 @@ impl EventHandler for Handler {
                                 }
                             }
 
-                            // 等待連接建立
                             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                         }
 
-                        // 設置音訊播放
                         if let Some(handler_lock) = manager.get(guild_id) {
                             let mut handler = handler_lock.lock().await;
 
@@ -212,7 +199,8 @@ impl EventHandler for Handler {
                                 player.lock().await.emitted_sink.clone(),
                                 48000,
                                 2,
-                            ).into();
+                            )
+                                .into();
 
                             handler.set_bitrate(songbird::driver::Bitrate::Auto);
 
@@ -221,11 +209,11 @@ impl EventHandler for Handler {
 
                             println!("音訊軌道 UUID: {:?}", track_handle.uuid());
 
-                            // 檢查播放狀態
                             if let Ok(info) = track_handle.get_info().await {
-                                println!("播放狀態: playing={:?}, volume={:?}",
-                                    info.playing,
-                                    info.volume);
+                                println!(
+                                    "播放狀態: playing={:?}, volume={:?}",
+                                    info.playing, info.volume
+                                );
                             }
                         } else {
                             println!("✗ 無法根據 ID 獲取公會處理器");
@@ -242,10 +230,18 @@ impl EventHandler for Handler {
         });
     }
 
+    async fn ready(&self, _ctx: Context, ready: Ready) {
+        println!("就緒！");
+        println!(
+            "使用以下連結邀請我： https://discord.com/api/oauth2/authorize?client_id={}&permissions=36700160&scope=bot",
+            ready.user.id
+        );
+    }
+
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         let data = ctx.data.read().await;
-
-        let config = data.get::<ConfigKey>().unwrap();
+        let poise_data = data.get::<PoiseDataKey>().unwrap();
+        let config = &poise_data.config;
 
         if new.user_id.to_string() != config.discord_user_id.to_string() {
             return;
@@ -253,23 +249,18 @@ impl EventHandler for Handler {
 
         println!("檢測到目標使用者的語音狀態變更");
 
-        let player = data.get::<SpotifyPlayerKey>().unwrap();
+        let player = &poise_data.player;
 
-        // 如果使用者剛剛連接
         if old.clone().is_none() {
-            // 啟用投播
-            println!("使用者加入語音頻道，啟用 Spotify Connect...");
+            println!("使用者加入語音頻道,啟用 Spotify Connect...");
             player.lock().await.enable_connect().await;
             return;
         }
 
-        // 如果使用者斷開連接
         if old.clone().unwrap().channel_id.is_some() && new.channel_id.is_none() {
-            // 禁用投播
             ctx.invisible();
             player.lock().await.disable_connect().await;
 
-            // 斷開連接
             let manager = songbird::get(&ctx)
                 .await
                 .expect("在初始化時已放入 Songbird 語音客戶端。")
@@ -280,13 +271,9 @@ impl EventHandler for Handler {
             return;
         }
 
-        // 如果使用者移動頻道
         if old.clone().unwrap().channel_id.unwrap() != new.channel_id.unwrap() {
             let bot_id = ctx.cache.current_user().id;
 
-            // 一個略帶黑客風格的方法來獲取舊公會 ID，因為
-            // 出於某種原因，在首次切換語音頻道時
-            // 它不存在
             let old_guild_id = match old.clone().unwrap().guild_id {
                 Some(gid) => gid,
                 None => ctx
@@ -316,7 +303,7 @@ impl EventHandler for Handler {
             if Option::is_some(&bot_channel) {
                 let manager = songbird::get(&ctx)
                     .await
-                .expect("在初始化時已放入 Songbird 語音客戶端。")
+                    .expect("在初始化時已放入 Songbird 語音客戶端。")
                     .clone();
 
                 if old_guild_id != new.guild_id.unwrap() {
@@ -333,6 +320,35 @@ impl EventHandler for Handler {
     }
 }
 
+// 用於在 serenity 的 TypeMap 中存儲 Poise 數據
+struct PoiseDataKey;
+impl serenity::prelude::TypeMapKey for PoiseDataKey {
+    type Value = Data;
+}
+
+// 示例命令 - 你可以根據需要添加更多命令
+/// 顯示機器人資訊
+#[poise::command(slash_command, prefix_command)]
+async fn info(ctx: PoiseContext<'_>) -> Result<(), Error> {
+    ctx.say("這是一個 Spotify Discord 機器人!").await?;
+    Ok(())
+}
+
+/// 顯示幫助訊息
+#[poise::command(track_edits, slash_command, prefix_command)]
+async fn help(
+    ctx: PoiseContext<'_>,
+    #[description = "要獲取幫助的特定命令"] command: Option<String>,
+) -> Result<(), Error> {
+    poise::builtins::help(
+        ctx,
+        command.as_deref(),
+        poise::builtins::HelpConfiguration::default(),
+    )
+        .await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     // 初始化 rustls 加密提供者
@@ -341,8 +357,6 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     tracing_subscriber::fmt::init();
-
-    let framework = StandardFramework::new();
 
     let config = match Config::new() {
         Ok(config) => config,
@@ -358,7 +372,6 @@ async fn main() {
         }
     };
 
-    // 使用配置中的 cache_dir，環境變數可以覆蓋
     let cache_dir = if let Ok(c) = env::var("CACHE_DIR") {
         Some(c)
     } else if !config.cache_dir.is_empty() {
@@ -376,21 +389,53 @@ async fn main() {
             config.spotify_bot_autoplay,
             config.spotify_device_name.clone(),
         )
-        .await,
+            .await,
     ));
+    // 克隆用於閉包的變數
+    let player_for_framework = player.clone();
+    let config_for_framework = config.clone();
+    let discord_token = config.discord_token.clone();
+    // 創建 Poise 框架
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            commands: vec![info(), help()], // 在這裡添加你的命令
+            event_handler: |_ctx, _event, _framework, _data| {
+                Box::pin(async move {
+                    // 可以在這裡處理其他事件
+                    Ok(())
+                })
+            },
+            ..Default::default()
+        })
+        .setup(move |ctx, _ready, framework| {
+            Box::pin(async move {
+                // 註冊斜線命令
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-    let mut client = Client::builder(
-        &config.discord_token,
-        gateway::GatewayIntents::GUILDS
-            | gateway::GatewayIntents::GUILD_VOICE_STATES,
-    )
-    .event_handler(Handler)
-    .framework(framework)
-    .type_map_insert::<SpotifyPlayerKey>(player)
-    .type_map_insert::<ConfigKey>(config)
-    .register_songbird()
-    .await
-    .expect("建立客戶端錯誤");
+                Ok(Data {
+                    config: config_for_framework,
+                    player: player_for_framework,
+                })
+            })
+        })
+        .build();
+
+    let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
+
+    let mut client = serenity::Client::builder(&discord_token, intents)
+        .event_handler(Handler)
+        .framework(framework)
+        .register_songbird()
+        .await
+        .expect("建立客戶端錯誤");
+    // 將 Data 也放入 serenity 的 TypeMap 中供 EventHandler 使用
+    {
+        let mut data = client.data.write().await;
+        data.insert::<PoiseDataKey>(Data {
+            config: config.clone(),
+            player: player.clone(),
+        });
+    }
 
     let _ = client
         .start()
