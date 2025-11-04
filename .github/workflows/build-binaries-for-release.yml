@@ -7,31 +7,91 @@ name: Build binaries for release
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        platform:
+          # Windows
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: aoede-windows-x86_64.exe
+            binary_name: aoede.exe
+          - name: Windows i686
+            os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact_name: aoede-windows-i686.exe
+            binary_name: aoede.exe
+
+          # Linux
+          - name: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: aoede-linux-x86_64
+            binary_name: aoede
+          - name: Linux i686
+            os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            artifact_name: aoede-linux-i686
+            binary_name: aoede
+
+          # macOS
+          - name: macOS x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: aoede-macos-x86_64
+            binary_name: aoede
+          - name: macOS ARM64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: aoede-macos-arm64
+            binary_name: aoede
+
     steps:
-      - uses: actions/checkout@v2
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v1
-      - name: Build in release mode
-        uses: actions-rs/cargo@v1
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          command: build
-          args: --release
+          targets: ${{ matrix.platform.target }}
 
-      - name: Prefix binary name
-        run: cp target/release/aoede target/release/${{ matrix.os }}-aoede
-        continue-on-error: true
+      - name: Install dependencies (Linux i686)
+        if: matrix.platform.target == 'i686-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib libasound2-dev:i386 pkg-config:i386
 
-      - name: Prefix binary name
-        run: cp target/release/aoede.exe target/release/${{ matrix.os }}-aoede.exe
-        continue-on-error: true
+      - name: Install dependencies (Linux x86_64)
+        if: matrix.platform.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Add to release
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          copy target\${{ matrix.platform.target }}\release\${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
+
+      - name: Upload binary to release
         uses: softprops/action-gh-release@v1
         with:
-          files: target/release/*-aoede!(*.d|*.pdb)
+          files: ${{ matrix.platform.artifact_name }}
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
