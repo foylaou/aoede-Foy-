@@ -42,6 +42,8 @@ pub struct SpotifyPlayer {
     pub bot_autoplay: bool,
     pub device_name: String,
     credentials: Credentials,
+    cache_dir: Option<String>,
+    quality: Bitrate,
 }
 
 pub struct EmittedSink {
@@ -361,7 +363,7 @@ impl SpotifyPlayer {
                     println!("未找到快取憑證,需要重新認證");
                     println!("========================================");
 
-                    match Self::re_auth(cache_dir_for_reauth, &device_name).await {   //移動後使用的值 [E0382]
+                    match Self::re_auth(cache_dir_for_reauth.clone(), &device_name).await {   //移動後使用的值 [E0382]
                         Ok(creds) => {
                             println!("✓ 重新認證成功");
                             creds
@@ -425,24 +427,26 @@ impl SpotifyPlayer {
             bot_autoplay,
             device_name,
             credentials,
+            cache_dir: cache_dir_for_reauth,
+            quality,
         }
     }
     pub async fn enable_connect(&mut self) {
         println!("[Spirc] 準備啟用 Spotify Connect...");
-    
+
         // 如果 Spirc 已經啟用，先關閉它
         if self.spirc.is_some() {
             println!("[Spirc] 關閉現有的 Spotify Connect...");
             self.disable_connect().await;
-            
+
             // 給一點時間讓資源釋放
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
-    
+
         // 創建新的 Session
         println!("[Spirc] 創建新的 Session...");
         let session_config = SessionConfig::default();
-        
+
         // 重用現有的 cache
         let cache = Cache::new(
             self.cache_dir.clone(),  // 您需要在 struct 中保存 cache_dir
@@ -450,16 +454,15 @@ impl SpotifyPlayer {
             self.cache_dir.clone(),
             Some(4 * 10_u64.pow(9)),
         ).ok();
-        
-        // 創建新的 Session
+
+        // let new_session = Session::new(session_config, cache);
         let new_session = Session::new(session_config, cache);
-        
         // 創建新的 Player
         let player_config = PlayerConfig {
             bitrate: self.quality,  // 您需要在 struct 中保存 quality
             ..Default::default()
         };
-        
+
         let cloned_sink = self.emitted_sink.clone();
         let new_player = Player::new(
             player_config,
@@ -467,11 +470,11 @@ impl SpotifyPlayer {
             self.mixer.get_soft_volume(),
             move || Box::new(cloned_sink),
         );
-        
+
         // 更新 struct 中的 session 和 player
         self.session = new_session;
         self.player = Some(new_player.clone());
-    
+
         println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
@@ -481,7 +484,7 @@ impl SpotifyPlayer {
             disable_volume: false,
             volume_steps: 0,
         };
-    
+
         println!("[Spirc] 調用 Spirc::new()...");
         match Spirc::new(
             config,
@@ -498,7 +501,7 @@ impl SpotifyPlayer {
                     task.await;
                     println!("[Spirc] Spirc task 結束");
                 });
-    
+
                 self.spirc = Some(Box::new(spirc));
                 println!("[Spirc] ✓ Spotify Connect 已成功啟用");
                 println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
