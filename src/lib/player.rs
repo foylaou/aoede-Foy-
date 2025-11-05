@@ -1,3 +1,4 @@
+///lib/player.rs
 use librespot::connect::{ConnectConfig, Spirc};
 use librespot::core::{
     authentication::Credentials,
@@ -31,6 +32,7 @@ use futures_util::StreamExt;
 use rubato::{FftFixedInOut, Resampler};
 use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
+use librespot::playback::player::PlayerEvent;
 
 pub struct SpotifyPlayer {
 
@@ -252,6 +254,10 @@ impl Clone for EmittedSink {
 
 
 impl SpotifyPlayer {
+
+    pub fn get_event_channel(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<PlayerEvent>> {
+        self.player.as_ref().map(|p| p.get_player_event_channel())
+    }
     pub async fn re_auth(
         cache_dir: Option<String>,
         device_name: &str,
@@ -431,35 +437,34 @@ impl SpotifyPlayer {
             quality,
         }
     }
-    pub async fn enable_connect(&mut self) {
+    pub async fn enable_connect(&mut self) -> bool {  // 返回 bool 表示是否重新創建了 Player
         println!("[Spirc] 準備啟用 Spotify Connect...");
 
         // 如果 Spirc 已經啟用，先關閉它
         if self.spirc.is_some() {
             println!("[Spirc] 關閉現有的 Spotify Connect...");
             self.disable_connect().await;
-
-            // 給一點時間讓資源釋放
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
+
+        let mut player_recreated: bool = false;
 
         // 創建新的 Session
         println!("[Spirc] 創建新的 Session...");
         let session_config = SessionConfig::default();
 
-        // 重用現有的 cache
         let cache = Cache::new(
-            self.cache_dir.clone(),  // 您需要在 struct 中保存 cache_dir
+            self.cache_dir.clone(),
             self.cache_dir.clone(),
             self.cache_dir.clone(),
             Some(4 * 10_u64.pow(9)),
         ).ok();
 
-        // let new_session = Session::new(session_config, cache);
         let new_session = Session::new(session_config, cache);
+
         // 創建新的 Player
         let player_config = PlayerConfig {
-            bitrate: self.quality,  // 您需要在 struct 中保存 quality
+            bitrate: self.quality,
             ..Default::default()
         };
 
@@ -471,10 +476,14 @@ impl SpotifyPlayer {
             move || Box::new(cloned_sink),
         );
 
-        // 更新 struct 中的 session 和 player
+        // 更新 session 和 player
         self.session = new_session;
         self.player = Some(new_player.clone());
+        player_recreated = true;
 
+        println!("[Spirc] ✓ 新的 Session 和 Player 創建成功");
+
+        // 創建 Spirc
         println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
@@ -495,8 +504,8 @@ impl SpotifyPlayer {
         ).await {
             Ok((spirc, task)) => {
                 println!("[Spirc] ✓ Spirc::new() 成功");
-                let handle = tokio::runtime::Handle::current();
-                handle.spawn(async move {
+
+                tokio::spawn(async move {
                     println!("[Spirc] Spirc task 開始運行");
                     task.await;
                     println!("[Spirc] Spirc task 結束");
@@ -511,12 +520,16 @@ impl SpotifyPlayer {
                 println!("[Spirc] 詳細錯誤訊息: {}", e);
             }
         }
+
+        player_recreated
     }
     pub async fn disable_connect(&mut self) {
-        if let Some(spirc) = self.spirc.as_ref() {
-            let _ = spirc.shutdown();
+        if let Some(spirc) = self.spirc.take() {
+            println!("[Spirc] 關閉 Spirc...");
+            spirc.shutdown().expect("Failed to shutdown Spirc");
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-
         self.spirc = None;
+        println!("[Spirc] Spirc 已關閉");
     }
 }
