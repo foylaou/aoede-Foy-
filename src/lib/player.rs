@@ -270,7 +270,7 @@ impl SpotifyPlayer {
         println!("請按照以下步驟操作：");
         println!("1. 打開您的 Spotify 應用（手機或電腦）");
         println!("2. 在設備列表中查找 '{}'", device_name);
-        println!("3. 選擇該設備並播放任何歌曲");
+        println!("3. 選擇該設備");
 
         if let Some(ref path) = cache_dir {
             println!("4. 認證完成後,憑證將保存到: {}/credentials.json", path);
@@ -447,7 +447,6 @@ impl SpotifyPlayer {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
-        let mut player_recreated: bool = false;
 
         // 創建新的 Session
         println!("[Spirc] 創建新的 Session...");
@@ -479,7 +478,7 @@ impl SpotifyPlayer {
         // 更新 session 和 player
         self.session = new_session;
         self.player = Some(new_player.clone());
-        player_recreated = true;
+
 
         println!("[Spirc] ✓ 新的 Session 和 Player 創建成功");
 
@@ -521,7 +520,7 @@ impl SpotifyPlayer {
             }
         }
 
-        player_recreated
+        true
     }
     pub async fn disable_connect(&mut self) {
         if let Some(spirc) = self.spirc.take() {
