@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: '選擇要建構的目標平台 (多選，使用逗號分隔)'
+        description: 'Select target platforms to build (multiple selection, comma separated)'
         required: false
         default: 'all'
         type: choice
@@ -36,7 +36,7 @@ jobs:
             platform_tag: Linux
             script_name: start.sh
 
-          # macOS ARM (Apple Silicon) - 只編譯 ARM64
+          # macOS ARM (Apple Silicon)
           - name: macOS ARM64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -55,15 +55,15 @@ jobs:
             script_name: run.ps1
         
     steps:
-      # --- 條件運行 Job ---
-      # 檢查是否應該跳過此 Job
+      # --- Conditional Job Execution ---
+      # Check if this job should be skipped
       - name: Check Platform Filter
         id: filter
         run: |
           input="${{ github.event.inputs.platforms }}"
           tag="${{ matrix.platform_tag }}"
           
-          # 如果是 push tag 觸發，或者 input 為空，則運行所有平台
+          # If triggered by push tag, or input is empty, run all platforms
           if [ "${{ github.event_name }}" = "push" ] || [ -z "$input" ] || [ "$input" = "all" ]; then
             echo "ShouldRun=true" >> $GITHUB_ENV
           elif echo "$input" | grep -q "$tag"; then
@@ -85,9 +85,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # --- 依賴安裝區塊 ---
+      # --- Dependencies Installation ---
 
-      # Linux 依賴
+      # Linux dependencies
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux' && env.ShouldRun == 'true'
         run: |
@@ -97,57 +97,57 @@ jobs:
             pkg-config \
             libasound2-dev
 
-      # macOS 依賴
+      # macOS dependencies
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS' && env.ShouldRun == 'true'
         run: |
-          # 安裝依賴
+          # Install dependencies
           brew install pkg-config opus cmake
           
-          # 獲取 Homebrew 路徑
+          # Get Homebrew path
           HOMEBREW_PREFIX=$(brew --prefix)
           
-          # 設置環境變數
+          # Set environment variables
           echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
           echo "OPUS_INCLUDE_DIR=$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
           echo "OPUS_STATIC=1" >> $GITHUB_ENV
           
-          # 為 ARM64 設置編譯標誌
+          # Set compile flags for ARM64
           echo "CFLAGS=-I$HOMEBREW_PREFIX/include -arch arm64" >> $GITHUB_ENV
           echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib -arch arm64" >> $GITHUB_ENV
           echo "RUSTFLAGS=-C link-arg=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
           
-          # macOS 系統已內建 Bonjour (dns_sd)，不需要額外安裝
-          echo "macOS 系統內建 Bonjour 支援"
+          # macOS has built-in Bonjour (dns_sd), no additional installation needed
+          echo "macOS has built-in Bonjour support"
 
-      # Windows 依賴
+      # Windows dependencies
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          # 檢查 Bonjour SDK 路徑
+          # Check Bonjour SDK path
           $BonjourPath = ".\rust-dns-sd\BonjourSDK"
           
           if (Test-Path $BonjourPath) {
-            Write-Host "找到 Bonjour SDK 於: $BonjourPath"
+            Write-Host "Found Bonjour SDK at: $BonjourPath"
             
-            # 設置環境變數指向 Bonjour SDK
+            # Set environment variables for Bonjour SDK
             $LibPath = Join-Path $BonjourPath "Lib\x64"
             $IncludePath = Join-Path $BonjourPath "Include"
             
             if (Test-Path $LibPath) {
-              Write-Host "找到 Bonjour 庫路徑: $LibPath"
+              Write-Host "Found Bonjour library path: $LibPath"
               
-              # 獲取絕對路徑
+              # Get absolute paths
               $AbsLibPath = (Resolve-Path $LibPath).Path
               $AbsIncludePath = (Resolve-Path $IncludePath).Path
               
-              Write-Host "絕對 Lib 路徑: $AbsLibPath"
+              Write-Host "Absolute Lib path: $AbsLibPath"
               
-              # 設置環境變數
+              # Set environment variables
               echo "BONJOUR_SDK_HOME=$BonjourPath" >> $env:GITHUB_ENV
               
-              # 設置 LIB 環境變數
+              # Set LIB environment variable
               $currentLib = $env:LIB
               if ($currentLib) {
                 echo "LIB=$AbsLibPath;$currentLib" >> $env:GITHUB_ENV
@@ -155,7 +155,7 @@ jobs:
                 echo "LIB=$AbsLibPath" >> $env:GITHUB_ENV
               }
               
-              # 設置 INCLUDE 環境變數
+              # Set INCLUDE environment variable
               $currentInclude = $env:INCLUDE
               if ($currentInclude) {
                 echo "INCLUDE=$AbsIncludePath;$currentInclude" >> $env:GITHUB_ENV
@@ -163,18 +163,18 @@ jobs:
                 echo "INCLUDE=$AbsIncludePath" >> $env:GITHUB_ENV
               }
               
-              Write-Host "環境變數已設置"
+              Write-Host "Environment variables set"
             } else {
-              Write-Error "找不到 Bonjour 庫路徑: $LibPath"
+              Write-Error "Bonjour library path not found: $LibPath"
               exit 1
             }
           } else {
-            Write-Error "找不到 Bonjour SDK 路徑: $BonjourPath"
+            Write-Error "Bonjour SDK path not found: $BonjourPath"
             exit 1
           }
         shell: powershell
           
-      # --- 建構區塊 ---
+      # --- Build ---
 
       - name: Cache cargo build
         if: env.ShouldRun == 'true'
@@ -186,68 +186,68 @@ jobs:
         if: env.ShouldRun == 'true'
         run: cargo build --release --target ${{ matrix.target }}
 
-      # --- 準備發布檔案 ---
+      # --- Prepare Release Files ---
 
       - name: Prepare release package (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          # 建立打包目錄
+          # Create package directory
           $PackageDir = "package"
           New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
           
-          # 複製二進制檔案
+          # Copy binary file
           $SourceBinary = "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
           Copy-Item -Path $SourceBinary -Destination "$PackageDir/${{ matrix.binary_name }}"
           
-          # 複製啟動腳本
+          # Copy startup script
           if (Test-Path "${{ matrix.script_name }}") {
             Copy-Item -Path "${{ matrix.script_name }}" -Destination "$PackageDir/${{ matrix.script_name }}"
-            Write-Host "已複製啟動腳本: ${{ matrix.script_name }}"
+            Write-Host "Copied startup script: ${{ matrix.script_name }}"
           } else {
-            Write-Host "警告: 找不到啟動腳本 ${{ matrix.script_name }}"
+            Write-Host "Warning: Startup script not found - ${{ matrix.script_name }}"
           }
           
-          # 複製 README（如果存在）
+          # Copy README if exists
           if (Test-Path "README.md") {
             Copy-Item -Path "README.md" -Destination "$PackageDir/README.md"
           }
           
-          # 建立 ZIP 壓縮檔
+          # Create ZIP archive
           Compress-Archive -Path "$PackageDir\*" -DestinationPath "${{ matrix.artifact_name }}.zip" -Force
           
-          Write-Host "打包完成: ${{ matrix.artifact_name }}.zip"
+          Write-Host "Package completed: ${{ matrix.artifact_name }}.zip"
         shell: powershell
 
       - name: Prepare release package (Linux/macOS)
         if: (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
         run: |
-          # 建立打包目錄
+          # Create package directory
           mkdir -p package
           
-          # 複製二進制檔案
+          # Copy binary file
           cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} package/${{ matrix.binary_name }}
           
-          # 複製啟動腳本並設置執行權限
+          # Copy startup script and set execute permission
           if [ -f "${{ matrix.script_name }}" ]; then
             cp ${{ matrix.script_name }} package/${{ matrix.script_name }}
             chmod +x package/${{ matrix.script_name }}
-            echo "已複製啟動腳本: ${{ matrix.script_name }}"
+            echo "Copied startup script: ${{ matrix.script_name }}"
           else
-            echo "警告: 找不到啟動腳本 ${{ matrix.script_name }}"
+            echo "Warning: Startup script not found - ${{ matrix.script_name }}"
           fi
           
-          # 複製 README（如果存在）
+          # Copy README if exists
           if [ -f "README.md" ]; then
             cp README.md package/README.md
           fi
           
-          # 建立 tar.gz 壓縮檔
+          # Create tar.gz archive
           tar -czf ${{ matrix.artifact_name }}.tar.gz -C package .
           
-          echo "打包完成: ${{ matrix.artifact_name }}.tar.gz"
+          echo "Package completed: ${{ matrix.artifact_name }}.tar.gz"
         shell: bash
           
-      # --- 上傳發布檔案 ---
+      # --- Upload Release Files ---
 
       - name: Upload binary to release (Windows)
         if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows' && env.ShouldRun == 'true'
@@ -269,7 +269,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 其他情況上傳為 artifact (Windows)
+      # Upload as artifact for non-tag builds (Windows)
       - name: Upload artifact (Windows)
         if: startsWith(github.ref, 'refs/tags/') == false && runner.os == 'Windows' && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
@@ -277,7 +277,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.zip
 
-      # 其他情況上傳為 artifact (Linux/macOS)
+      # Upload as artifact for non-tag builds (Linux/macOS)
       - name: Upload artifact (Linux/macOS)
         if: startsWith(github.ref, 'refs/tags/') == false && (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
