@@ -68,6 +68,7 @@ services:
 
 預建二進制檔案可在[發布頁面](https://github.com/codetheweb/aoede/releases)上獲取。下載適合您平台的二進制檔案，然後在終端機中：
 
+# Linux && Macos
 ```bash
 chmod +x aoede-linux-x86_64
 DISCORD_TOKEN=your token \
@@ -77,6 +78,16 @@ SPOTIFY_BOT_AUTOPLAY=true \
 SPOTIFY_DEVICE_NAME="MUSIC BOT" \
 ./aoede-linux-x86_64
 ```
+# Windows PowerShell
+```shell
+$env:DISCORD_TOKEN = ""
+$env:SPOTIFY_DEVICE_NAME = ""
+$env:DISCORD_USER_ID = 
+$env:CACHE_DIR = ""
+$env:SPOTIFY_BOT_AUTOPLAY = true
+C:\aoede.exe
+```
+
 
 ### 從原始碼建置：
 
