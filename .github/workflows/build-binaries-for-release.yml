@@ -19,18 +19,13 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform.name }}
-    # 使用 powershell 作為 Windows 的預設 shell
-    defaults:
-      run:
-        shell: powershell
-    runs-on: ${{ matrix.platform.os }}
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        # 使用一個變數來控制矩陣的過濾
         include:
           # Linux
           - name: Linux x86_64
@@ -38,7 +33,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: aoede-linux-x86_64
             binary_name: aoede
-            platform_tag: Linux # 新增標籤供過濾
+            platform_tag: Linux
 
           # macOS ARM (Apple Silicon) - 只編譯 ARM64
           - name: macOS ARM64
@@ -46,35 +41,34 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: aoede-macos-arm64
             binary_name: aoede
-            platform_tag: macOS # 新增標籤供過濾
+            platform_tag: macOS
 
           # Windows x86_64
           - name: Windows x86_64 (MSVC)
             os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: aoede-windows-x86_64
-            binary_name: aoede.exe # Windows 可執行檔需要 .exe 副檔名
-            platform_tag: Windows # 新增標籤供過濾
+            binary_name: aoede.exe
+            platform_tag: Windows
         
     steps:
       # --- 條件運行 Job ---
       # 檢查是否應該跳過此 Job
       - name: Check Platform Filter
         id: filter
-        # 如果輸入是 'all' 或是 '平台標籤' 被選中，則運行。
         run: |
-          $input = "${{ github.event.inputs.platforms }}"
-          $tag = "${{ matrix.platform.platform_tag }}"
+          input="${{ github.event.inputs.platforms }}"
+          tag="${{ matrix.platform_tag }}"
           
-          if ($input -eq 'all' -or $input -contains $tag) {
-              echo "ShouldRun=true" >> $env:GITHUB_ENV
-          } else {
-              echo "ShouldRun=false" >> $env:GITHUB_ENV
-          }
-        shell: powershell
-        
-      # 在所有後續步驟中，加入 if 條件
-      # if: env.ShouldRun == 'true'
+          # 如果是 push tag 觸發，或者 input 為空，則運行所有平台
+          if [ "${{ github.event_name }}" = "push" ] || [ -z "$input" ] || [ "$input" = "all" ]; then
+            echo "ShouldRun=true" >> $GITHUB_ENV
+          elif echo "$input" | grep -q "$tag"; then
+            echo "ShouldRun=true" >> $GITHUB_ENV
+          else
+            echo "ShouldRun=false" >> $GITHUB_ENV
+          fi
+        shell: bash
 
       - name: Checkout repository
         if: env.ShouldRun == 'true'
@@ -84,7 +78,7 @@ jobs:
         if: env.ShouldRun == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.target }}
+          targets: ${{ matrix.target }}
 
       # --- 依賴安裝區塊 ---
 
@@ -119,7 +113,7 @@ jobs:
           echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib -arch arm64" >> $GITHUB_ENV
           echo "RUSTFLAGS=-C link-arg=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
 
-      # Windows 依賴 (更新為不下載)
+      # Windows 依賴
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
@@ -143,34 +137,34 @@ jobs:
         if: env.ShouldRun == 'true'
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.platform.target }}
+          key: ${{ matrix.target }}
 
       - name: Build release binary
         if: env.ShouldRun == 'true'
-        run: cargo build --release --target ${{ matrix.platform.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       # 拆分 Rename binary 步驟以避免跨 Shell 語法錯誤
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          $SourceDir = "target/${{ matrix.platform.target }}/release"
-          $SourceFile = "${{ matrix.platform.binary_name }}"
-          Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.platform.artifact_name }}"
-        # 這裡不需要 shell: powershell 因為它是預設值
+          $SourceDir = "target/${{ matrix.target }}/release"
+          $SourceFile = "${{ matrix.binary_name }}"
+          Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.artifact_name }}"
+        shell: powershell
 
       - name: Rename binary (Linux/macOS)
         if: (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
         run: |
-          cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
-        shell: bash # 覆蓋預設的 PowerShell Shell
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}
+        shell: bash
           
       # 調整 Upload 步驟的路徑以匹配 Windows 的 .exe 
       - name: Upload binary to release
         if: startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.platform.artifact_name }}
+          files: ${{ matrix.artifact_name }}
           draft: false
           prerelease: false
         env:
@@ -181,8 +175,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') == false && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.artifact_name }}
-          path: ${{ matrix.platform.artifact_name }}
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
 
   update_latest_tag:
     name: Update 'latest' tag
