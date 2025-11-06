@@ -37,3 +37,8 @@ split-debuginfo = "unpacked"
 
 [api]
 DISCORD_USER_ID = "${DISCORD_USER_ID}"
+
+[patch.crates-io]
+# 告訴 Cargo：當你需要 dns-sd (無論是 librespot 還是其他依賴需要的) 時，
+# 請使用這個本地路徑下的版本來代替 crates.io 上的版本。
+dns-sd = { path = "./rust-dns-sd/dns-sd-patch" }
