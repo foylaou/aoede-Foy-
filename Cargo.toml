@@ -34,3 +34,6 @@ features = ["client", "voice", "gateway", "rustls_backend","model"]
 
 [profile.dev]
 split-debuginfo = "unpacked"
+
+[api]
+DISCORD_USER_ID = "${DISCORD_USER_ID}"

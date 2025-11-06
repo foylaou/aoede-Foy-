@@ -208,7 +208,9 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
 
             PlayerEvent::Loading { track_id, .. } | PlayerEvent::Playing { track_id, .. } => {
                 if matches!(event, PlayerEvent::Loading { .. }) {
-                    println!("Spotify 正在載入音樂,準備設置 Discord 音訊...");
+                    println!("Spotify 正在載入音樂, 重設音訊接收器...");
+                    player.lock().await.emitted_sink.reset();
+                    println!("✓ 音訊接收器已重設");
                 } else {
                     println!("Spotify 開始播放");
 
@@ -302,6 +304,9 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                 // 播放音訊
                 if let Some(handler_lock) = manager.get(guild_id) {
                     let mut handler = handler_lock.lock().await;
+
+                    // 停止當前所有音軌，防止多個消費者問題
+                    handler.stop();
 
                     println!("準備音訊源...");
                     use songbird::input::RawAdapter;

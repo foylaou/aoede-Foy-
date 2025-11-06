@@ -57,6 +57,23 @@ pub struct EmittedSink {
 }
 
 impl EmittedSink {
+    pub fn reset(&mut self) {
+        self.input_buffer.lock().unwrap().0.clear();
+        self.input_buffer.lock().unwrap().1.clear();
+
+        let receiver = self.receiver.lock().unwrap();
+        while receiver.try_recv().is_ok() {}
+
+        let mut resampler = self.resampler.lock().unwrap();
+        *resampler = FftFixedInOut::<f32>::new(
+            librespot::playback::SAMPLE_RATE as usize,
+            songbird::constants::SAMPLE_RATE_RAW,
+            1024,
+            2,
+        )
+        .unwrap();
+    }
+
     fn new() -> EmittedSink {
         // 通過將 sync_channel 的限制設定為至少一次重新取樣步驟的輸出幀大小
         // （在我們的頻率設定下，區塊大小為 1024 時為 1120），
@@ -460,6 +477,9 @@ impl SpotifyPlayer {
         ).ok();
 
         let new_session = Session::new(session_config, cache);
+
+        // 重設 Sink 以清除任何殘留的音訊數據
+        self.emitted_sink.reset();
 
         // 創建新的 Player
         let player_config = PlayerConfig {
