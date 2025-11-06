@@ -28,7 +28,11 @@ Aoede 在您加入它可以存取的語音頻道之前會顯示為離線。
 
 ### Docker Compose（推薦）：
 
+docker image來源：
+-  ghcr.io/foylaou/aoede-foy:latest
+-  s225002731650/aoede-foy:latest
 - `:latest`: 最新版本
+- `:v0.10.4`: 特定版本
 
 ```yaml
 version: '3.8'
