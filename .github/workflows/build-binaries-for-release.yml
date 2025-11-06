@@ -5,23 +5,40 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: '選擇要建構的目標平台 (多選，使用逗號分隔)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - Linux
+          - macOS
+          - Windows
 
 jobs:
   build:
     name: Build ${{ matrix.platform.name }}
+    # 使用 powershell 作為 Windows 的預設 shell
+    defaults:
+      run:
+        shell: powershell
     runs-on: ${{ matrix.platform.os }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        platform:
+        # 使用一個變數來控制矩陣的過濾
+        include:
           # Linux
           - name: Linux x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: aoede-linux-x86_64
             binary_name: aoede
+            platform_tag: Linux # 新增標籤供過濾
 
           # macOS ARM (Apple Silicon) - 只編譯 ARM64
           - name: macOS ARM64
@@ -29,19 +46,51 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: aoede-macos-arm64
             binary_name: aoede
+            platform_tag: macOS # 新增標籤供過濾
+
+          # Windows x86_64
+          - name: Windows x86_64 (MSVC)
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: aoede-windows-x86_64
+            binary_name: aoede.exe # Windows 可執行檔需要 .exe 副檔名
+            platform_tag: Windows # 新增標籤供過濾
 
     steps:
+      # --- 條件運行 Job ---
+      # 檢查是否應該跳過此 Job
+      - name: Check Platform Filter
+        id: filter
+        # 如果輸入是 'all' 或是 '平台標籤' 被選中，則運行。
+        run: |
+          $input = "${{ github.event.inputs.platforms }}"
+          $tag = "${{ matrix.platform.platform_tag }}"
+          
+          if ($input -eq 'all' -or $input -contains $tag) {
+              echo "ShouldRun=true" >> $env:GITHUB_ENV
+          } else {
+              echo "ShouldRun=false" >> $env:GITHUB_ENV
+          }
+        shell: powershell
+
+      # 在所有後續步驟中，加入 if 條件
+      # if: env.ShouldRun == 'true'
+
       - name: Checkout repository
+        if: env.ShouldRun == 'true'
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
+        if: env.ShouldRun == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.target }}
 
+      # --- 依賴安裝區塊 ---
+
       # Linux 依賴
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.ShouldRun == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -49,9 +98,9 @@ jobs:
             pkg-config \
             libasound2-dev
 
-      # macOS 依賴 - 修正版
+      # macOS 依賴
       - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.ShouldRun == 'true'
         run: |
           # 安裝依賴
           brew install pkg-config opus cmake
@@ -70,21 +119,60 @@ jobs:
           echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib -arch arm64" >> $GITHUB_ENV
           echo "RUSTFLAGS=-C link-arg=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
 
+      # Windows 依賴 (更新為不下載)
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows' && env.ShouldRun == 'true'
+        run: |
+          # ⚠️ 假設 Bonjour SDK 的必要檔案 (dnssd.lib, dns_sd.h 等) 已存在於
+          # 專案目錄下的相對路徑 `./rust-dns-sd/BonjourSDK/` 中。
+          # 您的 build.rs 將使用這些已 Checkout 的檔案進行連結。
+          
+          # Windows-latest 映像預設已包含 CMake (用於 Opus 等) 和 NASM (用於某些低階優化)，
+          # 無需手動安裝。
+          
+          Write-Host "Bonjour SDK 檔案已透過 Git Checkout 取得，無需額外下載或複製。"
+          
+          # 如果編譯時遇到找不到 Opus 庫的問題，
+          # 可能需要手動設定 VCPKG 或 Opus 相關的環境變數。
+          # 這裡假設 Rust 的 Opus 依賴能夠在 MSVC 環境下自行處理連結。
+        shell: powershell
+
+      # --- 建構區塊 ---
+
       - name: Cache cargo build
+        if: env.ShouldRun == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.platform.target }}
 
       - name: Build release binary
+        if: env.ShouldRun == 'true'
         run: cargo build --release --target ${{ matrix.platform.target }}
 
       - name: Rename binary
+        if: env.ShouldRun == 'true'
         run: |
-          cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
+          # 根據作業系統，調整複製路徑和檔案名稱
+          $SourceDir = "target/${{ matrix.platform.target }}/release"
+          $SourceFile = "${{ matrix.platform.binary_name }}"
+          
+          # 在 Windows 上，二進位檔名稱已經在 matrix 中定義為 aoede.exe
+          if ("${{ matrix.platform.os }}" -eq "Windows") {
+              # Windows 使用 PowerShell
+              Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.platform.artifact_name }}"
+          } else {
+              # Linux/macOS 使用 Bash
+              # 這裡需要切換到 bash shell 執行，但因為 defaults 設為 powershell，
+              # 保持 PowerShell 語法會更一致。
+              # 對於 Linux/macOS，如果 binary_name 是 aoede，則直接複製。
+              if ("${{ matrix.platform.os }}" -eq "Linux" -or "${{ matrix.platform.os }}" -eq "macOS") {
+                  & bash -c "cp $SourceDir/$SourceFile ${{ matrix.platform.artifact_name }}"
+              }
+          }
 
-      # 只在有 tag 時上傳到 release
+      # 調整 Upload 步驟的路徑以匹配 Windows 的 .exe
       - name: Upload binary to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.platform.artifact_name }}
@@ -95,7 +183,7 @@ jobs:
 
       # 其他情況上傳為 artifact
       - name: Upload artifact
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: "!startsWith(github.ref, 'refs/tags/')" && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.artifact_name }}
