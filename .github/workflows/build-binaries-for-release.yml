@@ -183,7 +183,7 @@ jobs:
 
       # 其他情況上傳為 artifact
       - name: Upload artifact
-        if: "!startsWith(github.ref, 'refs/tags/')" && env.ShouldRun == 'true'
+        if: !startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true' # 修正了這裡的引號
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.artifact_name }}
