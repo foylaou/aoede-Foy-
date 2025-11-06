@@ -149,26 +149,21 @@ jobs:
         if: env.ShouldRun == 'true'
         run: cargo build --release --target ${{ matrix.platform.target }}
 
-      - name: Rename binary
-        if: env.ShouldRun == 'true'
+      # 拆分 Rename binary 步驟以避免跨 Shell 語法錯誤
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          # 根據作業系統，調整複製路徑和檔案名稱
           $SourceDir = "target/${{ matrix.platform.target }}/release"
           $SourceFile = "${{ matrix.platform.binary_name }}"
-          
-          # 在 Windows 上，二進位檔名稱已經在 matrix 中定義為 aoede.exe
-          if ("${{ matrix.platform.os }}" -eq "Windows") {
-              # Windows 使用 PowerShell
-              Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.platform.artifact_name }}"
-          } else {
-              # Linux/macOS 使用 Bash
-              # 這裡需要切換到 bash shell 執行，但因為 defaults 設為 powershell，
-              # 保持 PowerShell 語法會更一致。
-              # 對於 Linux/macOS，如果 binary_name 是 aoede，則直接複製。
-              if ("${{ matrix.platform.os }}" -eq "Linux" -or "${{ matrix.platform.os }}" -eq "macOS") {
-                  & bash -c "cp $SourceDir/$SourceFile ${{ matrix.platform.artifact_name }}"
-              }
-          }
+          Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.platform.artifact_name }}"
+        # 這裡不需要 shell: powershell 因為它是預設值
+
+      - name: Rename binary (Linux/macOS)
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
+        run: |
+          cp target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary_name }} ${{ matrix.platform.artifact_name }}
+        shell: bash # 覆蓋預設的 PowerShell Shell
 
       # 調整 Upload 步驟的路徑以匹配 Windows 的 .exe
       - name: Upload binary to release
@@ -183,7 +178,7 @@ jobs:
 
       # 其他情況上傳為 artifact
       - name: Upload artifact
-        if: !startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true' # 修正了這裡的引號
+        if: !startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.artifact_name }}
