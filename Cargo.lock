@@ -823,8 +823,6 @@ dependencies = [
 [[package]]
 name = "dns-sd"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d748509dea20228f63ba519bf142ce2593396386125b01f5b0d6412dab972087"
 dependencies = [
  "libc",
  "pkg-config",
