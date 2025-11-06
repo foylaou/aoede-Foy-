@@ -10,8 +10,8 @@ fn main() {
     // 檢查目標是否為 Windows MSVC
     if std::env::var("TARGET").unwrap().contains("windows-msvc") {
         // 假設 SDK 位於 C:\BonjourSDK (這是您修復後的路徑)
-        let sdk_lib_path = "C:\\BonjourSDK\\Lib\\x64";
-        let sdk_include_path = "C:\\BonjourSDK\\Include";
+        let sdk_lib_path = "./rust-dns-sd/BonjourSDK/Lib/x64";
+        let sdk_include_path = "./rust-dns-sd/BonjourSDK/Include";
 
         // 1. 告訴 Cargo 連結器去哪裡尋找 .lib 檔案
         println!("cargo:rustc-link-search=native={}", sdk_lib_path);
