@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: '選擇要建構的目標平台 (多選，使用逗號分隔)'
+        description: 'Select target platforms to build (multiple selection, comma separated)'
         required: false
         default: 'all'
         type: choice
@@ -34,14 +34,16 @@ jobs:
             artifact_name: aoede-linux-x86_64
             binary_name: aoede
             platform_tag: Linux
+            script_name: start.sh
 
-          # macOS ARM (Apple Silicon) - 只編譯 ARM64
+          # macOS ARM (Apple Silicon)
           - name: macOS ARM64
             os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: aoede-macos-arm64
             binary_name: aoede
             platform_tag: macOS
+            script_name: start.sh
 
           # Windows x86_64
           - name: Windows x86_64 (MSVC)
@@ -50,17 +52,18 @@ jobs:
             artifact_name: aoede-windows-x86_64
             binary_name: aoede.exe
             platform_tag: Windows
+            script_name: run.ps1
         
     steps:
-      # --- 條件運行 Job ---
-      # 檢查是否應該跳過此 Job
+      # --- Conditional Job Execution ---
+      # Check if this job should be skipped
       - name: Check Platform Filter
         id: filter
         run: |
           input="${{ github.event.inputs.platforms }}"
           tag="${{ matrix.platform_tag }}"
           
-          # 如果是 push tag 觸發，或者 input 為空，則運行所有平台
+          # If triggered by push tag, or input is empty, run all platforms
           if [ "${{ github.event_name }}" = "push" ] || [ -z "$input" ] || [ "$input" = "all" ]; then
             echo "ShouldRun=true" >> $GITHUB_ENV
           elif echo "$input" | grep -q "$tag"; then
@@ -73,6 +76,8 @@ jobs:
       - name: Checkout repository
         if: env.ShouldRun == 'true'
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust toolchain
         if: env.ShouldRun == 'true'
@@ -80,9 +85,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # --- 依賴安裝區塊 ---
+      # --- Dependencies Installation ---
 
-      # Linux 依賴
+      # Linux dependencies
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux' && env.ShouldRun == 'true'
         run: |
@@ -92,46 +97,84 @@ jobs:
             pkg-config \
             libasound2-dev
 
-      # macOS 依賴
+      # macOS dependencies
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS' && env.ShouldRun == 'true'
         run: |
-          # 安裝依賴
+          # Install dependencies
           brew install pkg-config opus cmake
           
-          # 獲取 Homebrew 路徑
+          # Get Homebrew path
           HOMEBREW_PREFIX=$(brew --prefix)
           
-          # 設置環境變數
+          # Set environment variables
           echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
           echo "OPUS_INCLUDE_DIR=$HOMEBREW_PREFIX/include" >> $GITHUB_ENV
           echo "OPUS_STATIC=1" >> $GITHUB_ENV
           
-          # 為 ARM64 設置編譯標誌
+          # Set compile flags for ARM64
           echo "CFLAGS=-I$HOMEBREW_PREFIX/include -arch arm64" >> $GITHUB_ENV
           echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib -arch arm64" >> $GITHUB_ENV
           echo "RUSTFLAGS=-C link-arg=-L$HOMEBREW_PREFIX/lib" >> $GITHUB_ENV
+          
+          # macOS has built-in Bonjour (dns_sd), no additional installation needed
+          echo "macOS has built-in Bonjour support"
 
-      # Windows 依賴
+      # Windows dependencies
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          # ⚠️ 假設 Bonjour SDK 的必要檔案 (dnssd.lib, dns_sd.h 等) 已存在於
-          # 專案目錄下的相對路徑 `./rust-dns-sd/BonjourSDK/` 中。
-          # 您的 build.rs 將使用這些已 Checkout 的檔案進行連結。
+          # Check Bonjour SDK path
+          $BonjourPath = ".\rust-dns-sd\BonjourSDK"
           
-          # Windows-latest 映像預設已包含 CMake (用於 Opus 等) 和 NASM (用於某些低階優化)，
-          # 無需手動安裝。
-          
-          Write-Host "Bonjour SDK 檔案已透過 Git Checkout 取得，無需額外下載或複製。"
-          
-          # 如果編譯時遇到找不到 Opus 庫的問題，
-          # 可能需要手動設定 VCPKG 或 Opus 相關的環境變數。
-          # 這裡假設 Rust 的 Opus 依賴能夠在 MSVC 環境下自行處理連結。
+          if (Test-Path $BonjourPath) {
+            Write-Host "Found Bonjour SDK at: $BonjourPath"
+            
+            # Set environment variables for Bonjour SDK
+            $LibPath = Join-Path $BonjourPath "Lib\x64"
+            $IncludePath = Join-Path $BonjourPath "Include"
+            
+            if (Test-Path $LibPath) {
+              Write-Host "Found Bonjour library path: $LibPath"
+              
+              # Get absolute paths
+              $AbsLibPath = (Resolve-Path $LibPath).Path
+              $AbsIncludePath = (Resolve-Path $IncludePath).Path
+              
+              Write-Host "Absolute Lib path: $AbsLibPath"
+              
+              # Set environment variables
+              echo "BONJOUR_SDK_HOME=$BonjourPath" >> $env:GITHUB_ENV
+              
+              # Set LIB environment variable
+              $currentLib = $env:LIB
+              if ($currentLib) {
+                echo "LIB=$AbsLibPath;$currentLib" >> $env:GITHUB_ENV
+              } else {
+                echo "LIB=$AbsLibPath" >> $env:GITHUB_ENV
+              }
+              
+              # Set INCLUDE environment variable
+              $currentInclude = $env:INCLUDE
+              if ($currentInclude) {
+                echo "INCLUDE=$AbsIncludePath;$currentInclude" >> $env:GITHUB_ENV
+              } else {
+                echo "INCLUDE=$AbsIncludePath" >> $env:GITHUB_ENV
+              }
+              
+              Write-Host "Environment variables set"
+            } else {
+              Write-Error "Bonjour library path not found: $LibPath"
+              exit 1
+            }
+          } else {
+            Write-Error "Bonjour SDK path not found: $BonjourPath"
+            exit 1
+          }
         shell: powershell
           
-      # --- 建構區塊 ---
+      # --- Build ---
 
       - name: Cache cargo build
         if: env.ShouldRun == 'true'
@@ -143,40 +186,104 @@ jobs:
         if: env.ShouldRun == 'true'
         run: cargo build --release --target ${{ matrix.target }}
 
-      # 拆分 Rename binary 步驟以避免跨 Shell 語法錯誤
+      # --- Prepare Release Files ---
 
-      - name: Rename binary (Windows)
+      - name: Prepare release package (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
-          $SourceDir = "target/${{ matrix.target }}/release"
-          $SourceFile = "${{ matrix.binary_name }}"
-          Copy-Item -Path (Join-Path $SourceDir $SourceFile) -Destination "${{ matrix.artifact_name }}"
+          # Create package directory
+          $PackageDir = "package"
+          New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
+          
+          # Copy binary file
+          $SourceBinary = "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+          Copy-Item -Path $SourceBinary -Destination "$PackageDir/${{ matrix.binary_name }}"
+          
+          # Copy startup script
+          if (Test-Path "${{ matrix.script_name }}") {
+            Copy-Item -Path "${{ matrix.script_name }}" -Destination "$PackageDir/${{ matrix.script_name }}"
+            Write-Host "Copied startup script: ${{ matrix.script_name }}"
+          } else {
+            Write-Host "Warning: Startup script not found - ${{ matrix.script_name }}"
+          }
+          
+          # Copy README if exists
+          if (Test-Path "README.md") {
+            Copy-Item -Path "README.md" -Destination "$PackageDir/README.md"
+          }
+          
+          # Create ZIP archive
+          Compress-Archive -Path "$PackageDir\*" -DestinationPath "${{ matrix.artifact_name }}.zip" -Force
+          
+          Write-Host "Package completed: ${{ matrix.artifact_name }}.zip"
         shell: powershell
 
-      - name: Rename binary (Linux/macOS)
+      - name: Prepare release package (Linux/macOS)
         if: (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
         run: |
-          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}
+          # Create package directory
+          mkdir -p package
+          
+          # Copy binary file
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} package/${{ matrix.binary_name }}
+          
+          # Copy startup script and set execute permission
+          if [ -f "${{ matrix.script_name }}" ]; then
+            cp ${{ matrix.script_name }} package/${{ matrix.script_name }}
+            chmod +x package/${{ matrix.script_name }}
+            echo "Copied startup script: ${{ matrix.script_name }}"
+          else
+            echo "Warning: Startup script not found - ${{ matrix.script_name }}"
+          fi
+          
+          # Copy README if exists
+          if [ -f "README.md" ]; then
+            cp README.md package/README.md
+          fi
+          
+          # Create tar.gz archive
+          tar -czf ${{ matrix.artifact_name }}.tar.gz -C package .
+          
+          echo "Package completed: ${{ matrix.artifact_name }}.tar.gz"
         shell: bash
           
-      # 調整 Upload 步驟的路徑以匹配 Windows 的 .exe 
-      - name: Upload binary to release
-        if: startsWith(github.ref, 'refs/tags/') && env.ShouldRun == 'true'
+      # --- Upload Release Files ---
+
+      - name: Upload binary to release (Windows)
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows' && env.ShouldRun == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact_name }}
+          files: ${{ matrix.artifact_name }}.zip
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 其他情況上傳為 artifact
-      - name: Upload artifact
-        if: startsWith(github.ref, 'refs/tags/') == false && env.ShouldRun == 'true'
+      - name: Upload binary to release (Linux/macOS)
+        if: startsWith(github.ref, 'refs/tags/') && (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload as artifact for non-tag builds (Windows)
+      - name: Upload artifact (Windows)
+        if: startsWith(github.ref, 'refs/tags/') == false && runner.os == 'Windows' && env.ShouldRun == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+
+      # Upload as artifact for non-tag builds (Linux/macOS)
+      - name: Upload artifact (Linux/macOS)
+        if: startsWith(github.ref, 'refs/tags/') == false && (runner.os == 'Linux' || runner.os == 'macOS') && env.ShouldRun == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
 
   update_latest_tag:
     name: Update 'latest' tag
