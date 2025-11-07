@@ -510,7 +510,7 @@ impl SpotifyPlayer {
             is_group: false,
             initial_volume: u16::MAX / 2,
             disable_volume: false,
-            volume_steps: 0,
+            volume_steps: 64,
         };
 
         println!("[Spirc] 調用 Spirc::new()...");

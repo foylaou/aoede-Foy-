@@ -114,55 +114,61 @@ impl EventHandler for Handler {
         println!("檢測到目標使用者的語音狀態變更");
 
         let player = &poise_data.player;
+        let manager = songbird::get(&ctx)
+            .await
+            .expect("在初始化時已放入 Songbird 語音客戶端。");
 
-        // 使用者加入語音頻道或切換頻道
-        if old.is_none() ||
-            (old.as_ref().and_then(|o| o.channel_id).is_some() &&
-                new.channel_id.is_some() &&
-                old.as_ref().and_then(|o| o.channel_id) != new.channel_id) {
+        // 使用者加入語音頻道(從無到有)
+        if old.is_none() || old.as_ref().and_then(|o| o.channel_id).is_none() {
+            if new.channel_id.is_some() {
+                println!("使用者加入語音頻道,啟用 Spotify Connect...");
 
-            println!("使用者加入語音頻道,啟用 Spotify Connect...");
+                let player_recreated = player.lock().await.enable_connect().await;
 
-            // 啟用 connect 並檢查是否重新創建了 Player
-            let player_recreated = player.lock().await.enable_connect().await;
+                if player_recreated {
+                    println!("Player 已重新創建，重新設置事件處理器...");
 
-            if player_recreated {
-                println!("Player 已重新創建，重新設置事件處理器...");
+                    let mut handler_state = event_handler_state.lock().await;
+                    if let Some(handle) = handler_state.handle.take() {
+                        println!("取消舊的事件處理器...");
+                        handle.abort();
+                    }
 
-                // 取消舊的事件處理器
-                let mut handler_state = event_handler_state.lock().await;
-                if let Some(handle) = handler_state.handle.take() {
-                    println!("取消舊的事件處理器...");
-                    handle.abort();
+                    let c = ctx.clone();
+                    let player_clone = player.clone();
+
+                    let new_handle = tokio::spawn(async move {
+                        handle_spotify_events(c, player_clone).await;
+                    });
+
+                    handler_state.handle = Some(new_handle);
+                    println!("✓ 新的事件處理器已設置");
                 }
-
-                // 創建新的事件處理器
-                let c = ctx.clone();
-                let player_clone = player.clone();
-
-                let new_handle = tokio::spawn(async move {
-                    handle_spotify_events(c, player_clone).await;
-                });
-
-                handler_state.handle = Some(new_handle);
-                println!("✓ 新的事件處理器已設置");
             }
-
             return;
         }
 
         // 使用者離開語音頻道
         if old.as_ref().and_then(|o| o.channel_id).is_some() && new.channel_id.is_none() {
+            println!("使用者離開語音頻道");
             ctx.invisible();
             player.lock().await.disable_connect().await;
 
-            let manager = songbird::get(&ctx)
-                .await
-                .expect("在初始化時已放入 Songbird 語音客戶端。")
-                .clone();
-
             if let Some(guild_id) = new.guild_id {
                 let _ = manager.remove(guild_id).await;
+            }
+            return;
+        }
+
+        // 使用者在頻道間切換 - 不做任何事,讓事件處理器處理
+        if old.as_ref().and_then(|o| o.channel_id).is_some() && new.channel_id.is_some() {
+            let old_channel = old.as_ref().and_then(|o| o.channel_id);
+            let new_channel = new.channel_id;
+
+            if old_channel != new_channel {
+                println!("使用者切換頻道: {:?} -> {:?}", old_channel, new_channel);
+                println!("等待 Spotify 播放事件來處理頻道切換...");
+                // 不做任何處理,讓 PlayerEvent::Playing 事件處理器來處理
             }
         }
     }
@@ -268,13 +274,13 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                         .and_then(|state| state.channel_id.map(|ch| (gid.to_owned(), ch)))
                 }) else {
                     println!("⚠️ 無法在語音頻道中找到使用者。");
-                    continue;
+                    return;
                 };
 
                 println!("📍 找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
 
-                // 檢查是否需要加入頻道
-                let should_join = if let Some(handler_lock) = manager.get(guild_id) {
+                // 檢查 bot 當前狀態
+                let needs_action = if let Some(handler_lock) = manager.get(guild_id) {
                     let handler = handler_lock.lock().await;
                     let current_channel = handler.current_channel();
                     drop(handler);
@@ -282,40 +288,71 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     if let Some(ch) = current_channel {
                         let songbird_channel_id: songbird::id::ChannelId = channel_id.into();
                         if ch != songbird_channel_id {
-                            println!("🔄 機器人需要切換到新頻道");
-                            true
+                            println!("🔄 使用者在不同頻道,需要切換");
+                            Some(true) // 需要切換頻道
                         } else {
-                            println!("✓ 機器人已在正確的頻道中");
-                            false
+                            println!("✓ Bot 已在正確的頻道中");
+                            Some(false) // 只需要重新播放
                         }
                     } else {
-                        println!("🔄 機器人不在任何頻道中,需要加入");
-                        true
+                        println!("🔄 Bot 不在任何頻道中");
+                        None // 需要首次加入
                     }
                 } else {
-                    println!("🔄 沒有找到語音連接,需要加入");
-                    true
+                    println!("🔄 沒有找到語音連接");
+                    None // 需要首次加入
                 };
 
-                if should_join {
-                    println!("🎤 正在加入語音頻道...");
-                    match manager.join(guild_id, channel_id).await {
-                        Ok(_) => println!("✓ 成功加入語音頻道"),
-                        Err(e) => {
-                            println!("✗ 加入語音頻道失敗: {:?}", e);
-                            continue;
+                match needs_action {
+                    None => {
+                        // 首次加入
+                        println!("🎤 正在加入語音頻道...");
+                        match manager.join(guild_id, channel_id).await {
+                            Ok(_) => {
+                                println!("✓ 成功加入語音頻道");
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                            }
+                            Err(e) => {
+                                println!("✗ 加入語音頻道失敗: {:?}", e);
+                                return;
+                            }
                         }
                     }
+                    Some(true) => {
+                        // 需要切換頻道
+                        println!("🔄 切換到新頻道...");
 
-                    // 等待連接穩定
-                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                        // 先完全移除舊連接
+                        if let Err(e) = manager.remove(guild_id).await {
+                            println!("⚠️ 移除舊連接時出錯: {:?}", e);
+                        }
+
+                        // 等待舊連接完全斷開
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                        // 加入新頻道
+                        match manager.join(guild_id, channel_id).await {
+                            Ok(_) => {
+                                println!("✓ 成功切換到新頻道");
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                            }
+                            Err(e) => {
+                                println!("✗ 切換頻道失敗: {:?}", e);
+                                return;
+                            }
+                        }
+                    }
+                    Some(false) => {
+                        // 已經在正確頻道,不需要重新加入
+                        println!("✓ Bot 位置正確,準備更新音訊");
+                    }
                 }
 
-                // 播放音訊
+                // 播放/更新音訊
                 if let Some(handler_lock) = manager.get(guild_id) {
                     let mut handler = handler_lock.lock().await;
 
-                    // 停止當前所有音軌，防止多個消費者問題
+                    // 停止當前所有音軌
                     handler.stop();
 
                     println!("🎵 準備音訊源...");
@@ -329,7 +366,7 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     handler.set_bitrate(songbird::driver::Bitrate::Auto);
 
                     println!("✓ 開始播放音訊到 Discord...");
-                    let track_handle = handler.play_input(source);  // 改用 play_input
+                    let track_handle = handler.play_input(source);
 
                     println!("🎵 音訊軌道 UUID: {:?}", track_handle.uuid());
 
@@ -340,7 +377,7 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                         );
                     }
                 } else {
-                    println!("✗ 無法根據 ID 獲取公會處理器");
+                    println!("✗ 無法獲取公會處理器");
                 }
             }
 
