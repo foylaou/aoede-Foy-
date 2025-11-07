@@ -53,7 +53,7 @@ jobs:
             binary_name: aoede.exe
             platform_tag: Windows
             script_name: run.ps1
-        
+
     steps:
       # --- Conditional Job Execution ---
       # Check if this job should be skipped
@@ -173,7 +173,7 @@ jobs:
             exit 1
           }
         shell: powershell
-          
+
       # --- Build ---
 
       - name: Cache cargo build
@@ -188,6 +188,7 @@ jobs:
 
       # --- Prepare Release Files ---
 
+      # --- Prepare Release Files ---
       - name: Prepare release package (Windows)
         if: runner.os == 'Windows' && env.ShouldRun == 'true'
         run: |
@@ -195,9 +196,11 @@ jobs:
           $PackageDir = "package"
           New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
           
-          # Copy binary file
+          # Copy binary file with renamed filename
           $SourceBinary = "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
-          Copy-Item -Path $SourceBinary -Destination "$PackageDir/${{ matrix.binary_name }}"
+          $DestBinary = "$PackageDir/${{ matrix.artifact_name }}.exe"
+          Copy-Item -Path $SourceBinary -Destination $DestBinary
+          Write-Host "Copied and renamed binary to: ${{ matrix.artifact_name }}.exe"
           
           # Copy startup script
           if (Test-Path "${{ matrix.script_name }}") {
@@ -246,7 +249,7 @@ jobs:
           
           echo "Package completed: ${{ matrix.artifact_name }}.tar.gz"
         shell: bash
-          
+
       # --- Upload Release Files ---
 
       - name: Upload binary to release (Windows)

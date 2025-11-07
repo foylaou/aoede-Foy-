@@ -1,6 +1,6 @@
 [package]
 name = "aoede"
-version = "0.10.3"
+version = "0.10.5"
 authors = ["Max Isom <hi@maxisom.me>","Foy Laou <s225002731@gmail.com>"]
 edition = "2024"
 description = "一個可以直接從 Spotify 串流的 Discord 音樂機器人"
@@ -8,11 +8,10 @@ license = "MIT"
 keywords = ["discord", "spotify", "music", "bot"]
 categories = ["multimedia::audio"]
 
-[[bin]]
-name = "reauth"
-path = "src/lib/reauth.rs"
+
 
 [dependencies]
+# 移除原本的 librespot，改用 patch 版本
 librespot = {version = "0.7.1", default-features = false, features = ["with-dns-sd","native-tls",]}
 songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
 symphonia = { version = "0.5", features = ["all"] }
@@ -28,6 +27,7 @@ lazy_static = "1.5.0"
 poise = "0.6.1"
 uuid = "1.18.1"
 
+
 [dependencies.serenity]
 version = "0.12"
 features = ["client", "voice", "gateway", "rustls_backend","model"]
@@ -39,6 +39,14 @@ split-debuginfo = "unpacked"
 DISCORD_USER_ID = "${DISCORD_USER_ID}"
 
 [patch.crates-io]
-# 告訴 Cargo：當你需要 dns-sd (無論是 librespot 還是其他依賴需要的) 時，
-# 請使用這個本地路徑下的版本來代替 crates.io 上的版本。
+# Patch librespot 使用本地版本
+librespot = { path = "./librespot-fix-broken-metadata" }
+librespot-audio = { path = "./librespot-fix-broken-metadata/audio" }
+librespot-connect = { path = "./librespot-fix-broken-metadata/connect" }
+librespot-core = { path = "./librespot-fix-broken-metadata/core" }
+librespot-metadata = { path = "./librespot-fix-broken-metadata/metadata" }
+librespot-playback = { path = "./librespot-fix-broken-metadata/playback" }
+librespot-protocol = { path = "./librespot-fix-broken-metadata/protocol" }
+
+# 保留原本的 dns-sd patch
 dns-sd = { path = "./rust-dns-sd/dns-sd-patch" }

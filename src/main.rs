@@ -2,7 +2,7 @@ use std::env;
 use std::process::exit;
 
 use lib::config::Config;
-use songbird::{input::Input, SerenityInit};
+use songbird::{SerenityInit};
 
 mod lib {
     pub mod config;
@@ -192,8 +192,9 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
             }
         };
 
-        match event {
+        match &event {
             PlayerEvent::Stopped { .. } => {
+                println!("⏹️ Spotify 已停止播放");
                 ctx.set_presence(None, user::OnlineStatus::Online);
 
                 let manager = songbird::get(&ctx)
@@ -206,44 +207,47 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                 }
             }
 
-            PlayerEvent::Loading { track_id, .. } | PlayerEvent::Playing { track_id, .. } => {
-                if matches!(event, PlayerEvent::Loading { .. }) {
-                    println!("Spotify 正在載入音樂, 重設音訊接收器...");
-                    player.lock().await.emitted_sink.reset();
-                    println!("✓ 音訊接收器已重設");
-                } else {
-                    println!("Spotify 開始播放");
+            PlayerEvent::Loading { .. } => {
+                println!("🔄 Spotify 正在載入音樂, 重設音訊接收器...");
+                player.lock().await.emitted_sink.reset();
+                println!("✓ 音訊接收器已重設");
 
-                    // 設置 Discord 活動狀態
-                    let track: Result<librespot::metadata::Track, LibrespotError> =
-                        librespot::metadata::Metadata::get(
-                            &player.lock().await.session,
-                            &track_id,
-                        ).await;
+                // Loading 事件處理完畢，進入下一次循環
+                continue;
+            }
 
-                    if let Ok(track) = track {
-                        if let Some(artist_id) = track.artists.first() {
-                            let artist: Result<librespot::metadata::Artist, LibrespotError> =
-                                librespot::metadata::Metadata::get(
-                                    &player.lock().await.session,
-                                    &artist_id.id,
-                                ).await;
+            PlayerEvent::Playing { track_id, .. } => {
+                println!("▶️ Spotify 開始播放");
 
-                            if let Ok(artist) = artist {
-                                let listening_to = format!("{}: {}", artist.name, track.name);
+                // 設置 Discord 活動狀態
+                let track_result: Result<librespot::metadata::Track, LibrespotError> =
+                    librespot::metadata::Metadata::get(
+                        &player.lock().await.session,
+                        track_id,
+                    ).await;
 
-                                use serenity::all::{ActivityData, ActivityType};
-                                let activity = ActivityData {
-                                    name: listening_to,
-                                    kind: ActivityType::Listening,
-                                    state: None,
-                                    url: None,
-                                };
-                                ctx.set_presence(Some(activity), user::OnlineStatus::Online);
-                            }
+                if let Ok(track) = track_result {
+                    if let Some(artist_id) = track.artists.first() {
+                        let artist_result: Result<librespot::metadata::Artist, LibrespotError> =
+                            librespot::metadata::Metadata::get(
+                                &player.lock().await.session,
+                                &artist_id.id,
+                            ).await;
+
+                        if let Ok(artist) = artist_result {
+                            let listening_to = format!("{}: {}", artist.name, track.name);
+                            println!("🎵 正在播放: {}", listening_to);
+
+                            use serenity::all::{ActivityData, ActivityType};
+                            let activity = ActivityData {
+                                name: listening_to,
+                                kind: ActivityType::Listening,
+                                state: None,
+                                url: None,
+                            };
+                            ctx.set_presence(Some(activity), user::OnlineStatus::Online);
                         }
                     }
-                    continue;
                 }
 
                 // 處理加入語音頻道和播放音訊
@@ -263,11 +267,11 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                         .get(&config.discord_user_id.into())
                         .and_then(|state| state.channel_id.map(|ch| (gid.to_owned(), ch)))
                 }) else {
-                    println!("無法在語音頻道中找到使用者。");
+                    println!("⚠️ 無法在語音頻道中找到使用者。");
                     continue;
                 };
 
-                println!("找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
+                println!("📍 找到使用者所在頻道: Guild {:?}, Channel {:?}", guild_id, channel_id);
 
                 // 檢查是否需要加入頻道
                 let should_join = if let Some(handler_lock) = manager.get(guild_id) {
@@ -276,20 +280,25 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     drop(handler);
 
                     if let Some(ch) = current_channel {
-                        println!("機器人已在頻道 {:?} 中", ch);
                         let songbird_channel_id: songbird::id::ChannelId = channel_id.into();
-                        ch != songbird_channel_id
+                        if ch != songbird_channel_id {
+                            println!("🔄 機器人需要切換到新頻道");
+                            true
+                        } else {
+                            println!("✓ 機器人已在正確的頻道中");
+                            false
+                        }
                     } else {
-                        println!("機器人不在任何頻道中,需要加入");
+                        println!("🔄 機器人不在任何頻道中,需要加入");
                         true
                     }
                 } else {
-                    println!("沒有找到語音連接,需要加入");
+                    println!("🔄 沒有找到語音連接,需要加入");
                     true
                 };
 
                 if should_join {
-                    println!("正在加入語音頻道...");
+                    println!("🎤 正在加入語音頻道...");
                     match manager.join(guild_id, channel_id).await {
                         Ok(_) => println!("✓ 成功加入語音頻道"),
                         Err(e) => {
@@ -298,6 +307,7 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                         }
                     }
 
+                    // 等待連接穩定
                     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                 }
 
@@ -308,8 +318,8 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     // 停止當前所有音軌，防止多個消費者問題
                     handler.stop();
 
-                    println!("準備音訊源...");
-                    use songbird::input::RawAdapter;
+                    println!("🎵 準備音訊源...");
+                    use songbird::input::{Input, RawAdapter};
                     let source: Input = RawAdapter::new(
                         player.lock().await.emitted_sink.clone(),
                         48000,
@@ -319,13 +329,13 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     handler.set_bitrate(songbird::driver::Bitrate::Auto);
 
                     println!("✓ 開始播放音訊到 Discord...");
-                    let track_handle = handler.play(source.into());
+                    let track_handle = handler.play_input(source);  // 改用 play_input
 
-                    println!("音訊軌道 UUID: {:?}", track_handle.uuid());
+                    println!("🎵 音訊軌道 UUID: {:?}", track_handle.uuid());
 
                     if let Ok(info) = track_handle.get_info().await {
                         println!(
-                            "播放狀態: playing={:?}, volume={:?}",
+                            "📊 播放狀態: playing={:?}, volume={:?}",
                             info.playing, info.volume
                         );
                     }
@@ -335,10 +345,21 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
             }
 
             PlayerEvent::Paused { .. } => {
+                println!("⏸️ Spotify 已暫停");
                 ctx.set_presence(None, user::OnlineStatus::Online);
             }
 
-            _ => {}
+            PlayerEvent::Unavailable { track_id, .. } => {
+                println!("❌ 曲目不可用: {:?}", track_id);
+            }
+
+            PlayerEvent::EndOfTrack { track_id, .. } => {
+                println!("✅ 曲目播放完畢: {:?}", track_id);
+            }
+
+            _ => {
+                // 忽略其他事件
+            }
         }
     }
 
