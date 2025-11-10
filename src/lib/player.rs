@@ -455,52 +455,52 @@ impl SpotifyPlayer {
         }
     }
     pub async fn enable_connect(&mut self) -> bool {  // 返回 bool 表示是否重新創建了 Player
-        println!("[Spirc] 準備啟用 Spotify Connect...");
 
-        // 如果 Spirc 已經啟用，先關閉它
-        if self.spirc.is_some() {
-            println!("[Spirc] 關閉現有的 Spotify Connect...");
-            self.disable_connect().await;
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // 檢查 Spirc 是否已經存在
+        if let Some(spirc) = &self.spirc {
+            println!("[Spirc] Spirc 實例已存在，嘗試重新啟用 (activate)...");
+            // 重設 Sink，因為我們可能正要播放新歌
+            self.emitted_sink.reset();
+            match spirc.activate() {
+                Ok(_) => {
+                    println!("[Spirc] ✓ 成功 activate");
+                    return false; // Player 和 Spirc 沒有重新創建
+                }
+                Err(e) => {
+                    println!("[Spirc] ✗ activate 失敗: {:?}。將嘗試重建 Spirc。", e);
+                    // 故意讓 spirc 變 None 來觸發重建
+                    self.spirc.take();
+                    // 繼續往下走，執行重建邏輯
+                }
+            }
         }
 
+        // Spirc 不存在 (首次運行, 或 activate 失敗)
+        println!("[Spirc] 準備創建新的 Spirc 實例 (首次)...");
 
-        // 創建新的 Session
-        println!("[Spirc] 創建新的 Session...");
-        let session_config = SessionConfig::default();
-
-        let cache = Cache::new(
-            self.cache_dir.clone(),
-            self.cache_dir.clone(),
-            self.cache_dir.clone(),
-            Some(4 * 10_u64.pow(9)),
-        ).ok();
-
-        let new_session = Session::new(session_config, cache);
-
-        // 重設 Sink 以清除任何殘留的音訊數據
+        // 確保 Sink 是乾淨的
         self.emitted_sink.reset();
 
-        // 創建新的 Player
-        let player_config = PlayerConfig {
-            bitrate: self.quality,
-            ..Default::default()
+        // Spirc::new 需要一個 Arc<Player>。
+        // 我們在 new() 中已經創建了 player，所以這裡我們 clone 它。
+        let player_arc = if self.player.is_some() {
+            self.player.as_ref().unwrap().clone()
+        } else {
+            // 這不應該發生, 但作為防禦
+            println!("[Spirc] 警告: Player 為 None，重新創建一個");
+            let player_config = PlayerConfig { bitrate: self.quality, ..Default::default() };
+            let cloned_sink = self.emitted_sink.clone();
+            let new_player = Player::new(
+                player_config,
+                self.session.clone(),
+                self.mixer.get_soft_volume(),
+                move || Box::new(cloned_sink),
+            );
+            self.player = Some(new_player.clone());
+            new_player
         };
 
-        let cloned_sink = self.emitted_sink.clone();
-        let new_player = Player::new(
-            player_config,
-            new_session.clone(),
-            self.mixer.get_soft_volume(),
-            move || Box::new(cloned_sink),
-        );
-
-        // 更新 session 和 player
-        self.session = new_session;
-        self.player = Some(new_player.clone());
-
-
-        println!("[Spirc] ✓ 新的 Session 和 Player 創建成功");
+        println!("[Spirc] ✓ 使用現有的 Player 和 Session");
 
         // 創建 Spirc
         println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
@@ -516,9 +516,9 @@ impl SpotifyPlayer {
         println!("[Spirc] 調用 Spirc::new()...");
         match Spirc::new(
             config,
-            self.session.clone(),
-            self.credentials.clone(),
-            new_player,
+            self.session.clone(), // 重用 session
+            self.credentials.clone(), // 重用 credentials
+            player_arc, // 使用上面獲取的 player Arc
             self.mixer.clone(),
         ).await {
             Ok((spirc, task)) => {
@@ -537,18 +537,24 @@ impl SpotifyPlayer {
             Err(e) => {
                 println!("[Spirc] ✗ 無法創建 Spirc: {:?}", e);
                 println!("[Spirc] 詳細錯誤訊息: {}", e);
+                self.spirc = None; // 確保 spirc 是 None
             }
         }
 
-        true
+        true // Spirc 和 Task 被創建了 (或重建了)
     }
     pub async fn disable_connect(&mut self) {
-        if let Some(spirc) = self.spirc.take() {
-            println!("[Spirc] 關閉 Spirc...");
-            spirc.shutdown().expect("Failed to shutdown Spirc");
+        // 我們 *不* `take()` spirc，我們保留它以便重用
+        if let Some(spirc) = self.spirc.as_ref() {
+            println!("[Spirc] 斷開 (disconnect) Spirc...");
+
+            // 根據使用者的要求，我們使用 `disconnect` 而不是 `shutdown`
+            // `disconnect(true)` 會暫停播放並斷開連接
+            spirc.disconnect(true).expect("Failed to send disconnect command");
+
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        self.spirc = None;
-        println!("[Spirc] Spirc 已關閉");
+        // 我們不再設置 self.spirc = None
+        println!("[Spirc] Spirc 已斷開 (但實例被保留)");
     }
 }
