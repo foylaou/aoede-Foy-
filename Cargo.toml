@@ -12,7 +12,7 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 # 移除原本的 librespot，改用 patch 版本
-librespot = {version = "0.7.1", default-features = false, features = ["with-dns-sd","native-tls",]}
+librespot = {version = "0.8.0", default-features = false, features = ["with-dns-sd","native-tls",]}
 songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
 symphonia = { version = "0.5", features = ["all"] }
 rustls = { version = "0.23", features = ["ring"] }
@@ -39,14 +39,7 @@ split-debuginfo = "unpacked"
 DISCORD_USER_ID = "${DISCORD_USER_ID}"
 
 [patch.crates-io]
-# Patch librespot 使用本地版本
-librespot = { path = "./librespot-fix-broken-metadata" }
-librespot-audio = { path = "./librespot-fix-broken-metadata/audio" }
-librespot-connect = { path = "./librespot-fix-broken-metadata/connect" }
-librespot-core = { path = "./librespot-fix-broken-metadata/core" }
-librespot-metadata = { path = "./librespot-fix-broken-metadata/metadata" }
-librespot-playback = { path = "./librespot-fix-broken-metadata/playback" }
-librespot-protocol = { path = "./librespot-fix-broken-metadata/protocol" }
+
 
 # 保留原本的 dns-sd patch
 dns-sd = { path = "./rust-dns-sd/dns-sd-patch" }
