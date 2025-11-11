@@ -177,19 +177,21 @@ impl EventHandler for Handler {
 // 獨立的函數處理 Spotify 事件
 async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) {
     println!("事件處理器已啟動");
-
-    // 獲取新的事件通道
-    let mut receiver = {
-        let player_lock = player.lock().await;
-        if let Some(ref p) = player_lock.player {
-            p.get_player_event_channel()
-        } else {
-            println!("警告：播放器未初始化");
-            return;
-        }
-    };
-
     loop {
+        let mut receiver = {
+            let player_lock = player.lock().await;
+            if let Some(ref p) = player_lock.player {
+                p.get_player_event_channel()
+            } else {
+                // 如果 player 為空，嘗試重新啟用 connect
+                println!("警告：播放器未初始化。嘗試重新啟用 Connect...");
+                // **【重要】這裡呼叫 enable_connect 來確保 Player 存在**
+                drop(player_lock); // 釋放鎖定
+                player.lock().await.enable_connect().await;
+                // 再次嘗試獲取接收器
+                continue;
+            }
+        };
         let event = match receiver.recv().await {
             Some(e) => e,
             None => {
@@ -398,6 +400,7 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                 // 忽略其他事件
             }
         }
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 
     println!("事件處理器已結束");
