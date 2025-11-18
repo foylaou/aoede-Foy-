@@ -25,7 +25,7 @@ use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender},
     Arc, Mutex,
 };
-use std::{io};
+use std::{io, time::Instant};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures_util::StreamExt;
@@ -46,6 +46,7 @@ pub struct SpotifyPlayer {
     credentials: Credentials,
     cache_dir: Option<String>,
     quality: Bitrate,
+    last_disconnect_time: Option<Instant>,
 }
 
 pub struct EmittedSink {
@@ -452,25 +453,51 @@ impl SpotifyPlayer {
             credentials,
             cache_dir: cache_dir_for_reauth,
             quality,
+            last_disconnect_time: None,
         }
     }
     pub async fn enable_connect(&mut self) -> bool {  // 返回 bool 表示是否重新創建了 Player
 
         // 檢查 Spirc 是否已經存在
         if let Some(spirc) = &self.spirc {
-            println!("[Spirc] Spirc 實例已存在，嘗試重新啟用 (activate)...");
-            // 重設 Sink，因為我們可能正要播放新歌
-            self.emitted_sink.reset();
-            match spirc.activate() {
-                Ok(_) => {
-                    println!("[Spirc] ✓ 成功 activate");
-                    return false; // Player 和 Spirc 沒有重新創建
+            // 檢查是否長時間未使用 (超過 1 小時)
+            const STALE_THRESHOLD_SECS: u64 = 3600; // 1 小時
+            let should_rebuild = if let Some(last_disconnect) = self.last_disconnect_time {
+                let elapsed = last_disconnect.elapsed().as_secs();
+                if elapsed > STALE_THRESHOLD_SECS {
+                    println!("[Spirc] Spirc 已閒置 {} 秒（超過 {} 秒），強制重建以避免狀態不同步",
+                             elapsed, STALE_THRESHOLD_SECS);
+                    true
+                } else {
+                    println!("[Spirc] Spirc 閒置 {} 秒，嘗試重新啟用 (activate)...", elapsed);
+                    false
                 }
-                Err(e) => {
-                    println!("[Spirc] ✗ activate 失敗: {:?}。將嘗試重建 Spirc。", e);
-                    // 故意讓 spirc 變 None 來觸發重建
-                    self.spirc.take();
-                    // 繼續往下走，執行重建邏輯
+            } else {
+                // 沒有 disconnect 記錄，說明剛創建不久，直接 activate
+                println!("[Spirc] Spirc 實例已存在，嘗試重新啟用 (activate)...");
+                false
+            };
+
+            if should_rebuild {
+                // 長時間未使用，強制重建
+                println!("[Spirc] 準備重建 Spirc...");
+                self.spirc.take();
+                // 繼續往下走，執行重建邏輯
+            } else {
+                // 短時間內重新啟用，嘗試 activate
+                self.emitted_sink.reset();
+                match spirc.activate() {
+                    Ok(_) => {
+                        println!("[Spirc] ✓ 成功 activate");
+                        self.last_disconnect_time = None; // 清除斷開時間
+                        return false; // Player 和 Spirc 沒有重新創建
+                    }
+                    Err(e) => {
+                        println!("[Spirc] ✗ activate 失敗: {:?}。將嘗試重建 Spirc。", e);
+                        // 故意讓 spirc 變 None 來觸發重建
+                        self.spirc.take();
+                        // 繼續往下走，執行重建邏輯
+                    }
                 }
             }
         }
@@ -531,6 +558,7 @@ impl SpotifyPlayer {
                 });
 
                 self.spirc = Some(Box::new(spirc));
+                self.last_disconnect_time = None; // 清除斷開時間
                 println!("[Spirc] ✓ Spotify Connect 已成功啟用");
                 println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
             }
@@ -553,6 +581,9 @@ impl SpotifyPlayer {
             spirc.disconnect(true).expect("Failed to send disconnect command");
 
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            // 記錄斷開時間
+            self.last_disconnect_time = Some(Instant::now());
         }
         // 我們不再設置 self.spirc = None
         println!("[Spirc] Spirc 已斷開 (但實例被保留)");
