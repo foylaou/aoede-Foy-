@@ -33,6 +33,7 @@ use rubato::{FftFixedInOut, Resampler};
 use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
 use librespot::playback::player::PlayerEvent;
+use std::mem::size_of;
 
 pub struct SpotifyPlayer {
 
@@ -44,7 +45,7 @@ pub struct SpotifyPlayer {
     pub bot_autoplay: bool,
     pub device_name: String,
     credentials: Credentials,
-    cache_dir: Option<String>,
+    _cache_dir: Option<String>,
     quality: Bitrate,
     last_disconnect_time: Option<Instant>,
 }
@@ -189,7 +190,7 @@ lazy_static! {
         }
 fn log_audio_write() {
     // 使用 fetch_add 方法原子地增加計數器，並取得舊值
-    let previous_count = crate::lib::player::SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+    let previous_count = SAFE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
     let current_count = previous_count + 1;
 
     // 檢查是否達到 10000 的倍數 (使用當前值)
@@ -451,7 +452,7 @@ impl SpotifyPlayer {
             bot_autoplay,
             device_name,
             credentials,
-            cache_dir: cache_dir_for_reauth,
+            _cache_dir: cache_dir_for_reauth,
             quality,
             last_disconnect_time: None,
         }
@@ -589,3 +590,5 @@ impl SpotifyPlayer {
         println!("[Spirc] Spirc 已斷開 (但實例被保留)");
     }
 }
+
+

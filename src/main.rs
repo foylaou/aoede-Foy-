@@ -122,7 +122,21 @@ impl EventHandler for Handler {
 
         // 使用者加入語音頻道(從無到有)
         if old.is_none() || old.as_ref().and_then(|o| o.channel_id).is_none() {
-            if new.channel_id.is_some() {
+            if let Some(channel_id) = new.channel_id {
+                // 1. 立即加入語音頻道 (優先於啟用 Connect)
+                if let Some(guild_id) = new.guild_id {
+                    println!("🎤 檢測到使用者加入，機器人立即加入語音頻道...");
+                    if let Err(e) = manager.join(guild_id, channel_id).await {
+                        println!("✗ 加入語音頻道失敗: {:?}", e);
+                        // 如果加入失敗，可能不應該繼續啟用 Connect，但為了保險起見還是繼續
+                    } else {
+                        println!("✓ 成功加入語音頻道 (預備狀態)");
+                        // 等待連接穩定
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                }
+
+                // 2. 啟用 Spotify Connect
                 println!("使用者加入語音頻道,啟用 Spotify Connect...");
 
                 let player_recreated = player.lock().await.enable_connect().await;
@@ -204,15 +218,9 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
             PlayerEvent::Stopped { .. } => {
                 println!("⏹️ Spotify 已停止播放");
                 ctx.set_presence(None, user::OnlineStatus::Online);
-
-                let manager = songbird::get(&ctx)
-                    .await
-                    .expect("在初始化時已放入 Songbird 語音客戶端。")
-                    .clone();
-
-                for guild_id in ctx.cache.guilds() {
-                    let _ = manager.remove(guild_id).await;
-                }
+                
+                // 修改：不再主動離開語音頻道，保持在頻道中等待下一首
+                println!("ℹ️ 保持在語音頻道中等待...");
             }
 
             PlayerEvent::Loading { .. } => {
@@ -228,34 +236,64 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                 println!("▶️ Spotify 開始播放");
 
                 // 設置 Discord 活動狀態
-                let track_result: Result<librespot::metadata::Track, LibrespotError> =
-                    librespot::metadata::Metadata::get(
+                // 設置 Discord 活動狀態
+                // 嘗試獲取 Metadata，帶有重試機制
+                let mut attempts = 0;
+                let max_attempts = 3;
+                let mut track_result: Result<librespot::metadata::Track, LibrespotError> = Err(LibrespotError::deadline_exceeded("Initial attempt")); // Dummy error
+
+                while attempts < max_attempts {
+                    track_result = librespot::metadata::Metadata::get(
                         &player.lock().await.session,
                         track_id,
                     ).await;
 
+                    if track_result.is_ok() {
+                        break;
+                    }
+
+                    attempts += 1;
+                    if attempts < max_attempts {
+                        println!("⚠️ 無法獲取 Metadata (嘗試 {}/{}), 1秒後重試...", attempts, max_attempts);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                    }
+                }
+
                 if let Ok(track) = track_result {
+                    let mut artist_name = "Unknown Artist".to_string();
                     if let Some(artist_id) = track.artists.first() {
                         let artist_result: Result<librespot::metadata::Artist, LibrespotError> =
                             librespot::metadata::Metadata::get(
                                 &player.lock().await.session,
                                 &artist_id.id,
                             ).await;
-
+                        
                         if let Ok(artist) = artist_result {
-                            let listening_to = format!("{}: {}", artist.name, track.name);
-                            println!("🎵 正在播放: {}", listening_to);
-
-                            use serenity::all::{ActivityData, ActivityType};
-                            let activity = ActivityData {
-                                name: listening_to,
-                                kind: ActivityType::Listening,
-                                state: None,
-                                url: None,
-                            };
-                            ctx.set_presence(Some(activity), user::OnlineStatus::Online);
+                            artist_name = artist.name;
                         }
                     }
+
+                    let listening_to = format!("{}: {}", artist_name, track.name);
+                    println!("🎵 正在播放: {}", listening_to);
+
+                    use serenity::all::{ActivityData, ActivityType};
+                    let activity = ActivityData {
+                        name: listening_to,
+                        kind: ActivityType::Listening,
+                        state: None,
+                        url: None,
+                    };
+                    ctx.set_presence(Some(activity), user::OnlineStatus::Online);
+                } else {
+                    println!("✗ 放棄獲取 Metadata，僅顯示狀態");
+                    use serenity::all::{ActivityData, ActivityType};
+                    let activity = ActivityData {
+                        name: "Spotify Music".to_string(),
+                        kind: ActivityType::Listening,
+                        state: None,
+                        url: None,
+                    };
+                    ctx.set_presence(Some(activity), user::OnlineStatus::Online);
                 }
 
                 // 處理加入語音頻道和播放音訊

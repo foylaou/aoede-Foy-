@@ -14,29 +14,27 @@ categories = ["multimedia::audio"]
 # 移除原本的 librespot，改用 patch 版本
 librespot = {version = "0.8.0", default-features = false, features = ["with-dns-sd","native-tls",]}
 songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
-symphonia = { version = "0.5", features = ["all"] }
+symphonia = { version = "0.5.5", features = ["all"] }
 rustls = { version = "0.23", features = ["ring"] }
 tracing-subscriber = "0.3"
 tokio = { version = "1.48", features = ["full"] }
 byteorder = "1.5"
 serde = "1.0"
 figment = { version = "0.10", features = ["toml", "env"] }
-rubato = "0.16"
+rubato = "0.16.2"
 futures-util = "0.3"
 lazy_static = "1.5.0"
 poise = "0.6.1"
-uuid = "1.18.1"
+uuid = "1.19.0"
 
 
 [dependencies.serenity]
-version = "0.12"
+version = "0.12.4"
 features = ["client", "voice", "gateway", "rustls_backend","model"]
 
 [profile.dev]
 split-debuginfo = "unpacked"
 
-[api]
-DISCORD_USER_ID = "${DISCORD_USER_ID}"
 
 [patch.crates-io]
 
