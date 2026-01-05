@@ -29,7 +29,8 @@ use std::{io, time::Instant};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures_util::StreamExt;
-use rubato::{FftFixedInOut, Resampler};
+use rubato::{Fft, Resampler, FixedSync};
+use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
 use librespot::playback::player::PlayerEvent;
@@ -53,25 +54,28 @@ pub struct SpotifyPlayer {
 pub struct EmittedSink {
     sender: Arc<SyncSender<[f32; 2]>>,
     pub receiver: Arc<Mutex<Receiver<[f32; 2]>>>,
-    input_buffer: Arc<Mutex<(Vec<f32>, Vec<f32>)>>,
-    resampler: Arc<Mutex<FftFixedInOut<f32>>>,
+    input_buffer: Arc<Mutex<Vec<Vec<f32>>>>,
+    resampler: Arc<Mutex<Fft<f32>>>,
     resampler_input_frames_needed: usize,
 }
 
 impl EmittedSink {
     pub fn reset(&mut self) {
-        self.input_buffer.lock().unwrap().0.clear();
-        self.input_buffer.lock().unwrap().1.clear();
+        let mut input_buffer = self.input_buffer.lock().unwrap();
+        input_buffer[0].clear();
+        input_buffer[1].clear();
 
         let receiver = self.receiver.lock().unwrap();
         while receiver.try_recv().is_ok() {}
 
         let mut resampler = self.resampler.lock().unwrap();
-        *resampler = FftFixedInOut::<f32>::new(
+        *resampler = Fft::<f32>::new(
             librespot::playback::SAMPLE_RATE as usize,
             songbird::constants::SAMPLE_RATE_RAW,
             1024,
+            1,
             2,
+            FixedSync::Input,
         )
         .unwrap();
     }
@@ -82,11 +86,13 @@ impl EmittedSink {
         // 可以減少 EmittedSink::write 和 EmittedSink::read 之間所需的同步次數。
         let (sender, receiver) = sync_channel::<[f32; 2]>(1120);
 
-        let resampler = FftFixedInOut::<f32>::new(
+        let resampler = Fft::<f32>::new(
             librespot::playback::SAMPLE_RATE as usize,
             songbird::constants::SAMPLE_RATE_RAW,
             1024,
+            1,
             2,
+            FixedSync::Input,
         )
         .unwrap();
 
@@ -95,10 +101,10 @@ impl EmittedSink {
         EmittedSink {
             sender: Arc::new(sender),
             receiver: Arc::new(Mutex::new(receiver)),
-            input_buffer: Arc::new(Mutex::new((
+            input_buffer: Arc::new(Mutex::new(vec![
                 Vec::with_capacity(resampler_input_frames_needed),
                 Vec::with_capacity(resampler_input_frames_needed),
-            ))),
+            ])),
             resampler: Arc::new(Mutex::new(resampler)),
             resampler_input_frames_needed,
         }
@@ -109,6 +115,7 @@ impl audio_backend::Sink for EmittedSink {
     fn start(&mut self) -> SinkResult<()> {
         println!("[音訊] Sink 啟動");
         Ok(())
+
     }
 
     fn stop(&mut self) -> SinkResult<()> {
@@ -130,30 +137,40 @@ impl audio_backend::Sink for EmittedSink {
 
         let mut resampler = self.resampler.lock().unwrap();
 
-        let mut resampled_buffer = resampler.output_buffer_allocate(true);
+        let output_frames = resampler.output_frames_max();
+        let mut resampled_buffer = vec![vec![0.0f32; output_frames]; 2];
 
         for c in samples.chunks_exact(2) {
-            input_buffer.0.push(c[0] as f32);
-            input_buffer.1.push(c[1] as f32);
+            input_buffer[0].push(c[0] as f32);
+            input_buffer[1].push(c[1] as f32);
 
-            if input_buffer.0.len() == frames_needed {
-                resampler
+            if input_buffer[0].len() == frames_needed {
+                let input_adapter = SequentialSliceOfVecs::new(
+                    &input_buffer,
+                    2,
+                    frames_needed,
+                ).unwrap();
+
+                let mut output_adapter = SequentialSliceOfVecs::new_mut(
+                    &mut resampled_buffer,
+                    2,
+                    output_frames,
+                ).unwrap();
+
+                let (_in_frames, out_frames) = resampler
                     .process_into_buffer(
-                        &[
-                            &input_buffer.0[0..frames_needed],
-                            &input_buffer.1[0..frames_needed],
-                        ],
-                        &mut resampled_buffer,
+                        &input_adapter,
+                        &mut output_adapter,
                         None,
                     )
                     .unwrap();
 
-                input_buffer.0.clear();
-                input_buffer.1.clear();
+                input_buffer[0].clear();
+                input_buffer[1].clear();
 
                 let sender = self.sender.clone();
 
-                for i in 0..resampled_buffer[0].len() {
+                for i in 0..out_frames {
                     sender
                         .send([resampled_buffer[0][i], resampled_buffer[1][i]])
                         .unwrap()
