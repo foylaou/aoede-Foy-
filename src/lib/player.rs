@@ -15,8 +15,11 @@ use librespot::playback::{
     decoder::AudioPacket,
     mixer::softmixer::SoftMixer,
     mixer::{Mixer, MixerConfig},
-    player::Player,
+    player::{Player, PlayerEvent},
 };
+
+
+
 use std::sync::{ atomic::{AtomicUsize, Ordering}};
 use librespot::discovery::Discovery;
 
@@ -33,8 +36,10 @@ use rubato::{Fft, Resampler, FixedSync};
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
-use librespot::playback::player::PlayerEvent;
+
 use std::mem::size_of;
+use log::debug;
+use tracing_subscriber::fmt::format::debug_fn;
 
 pub struct SpotifyPlayer {
 
@@ -57,33 +62,12 @@ pub struct EmittedSink {
     input_buffer: Arc<Mutex<Vec<Vec<f32>>>>,
     resampler: Arc<Mutex<Fft<f32>>>,
     resampler_input_frames_needed: usize,
+
 }
 
 impl EmittedSink {
-    pub fn reset(&mut self) {
-        let mut input_buffer = self.input_buffer.lock().unwrap();
-        input_buffer[0].clear();
-        input_buffer[1].clear();
-
-        let receiver = self.receiver.lock().unwrap();
-        while receiver.try_recv().is_ok() {}
-
-        let mut resampler = self.resampler.lock().unwrap();
-        *resampler = Fft::<f32>::new(
-            librespot::playback::SAMPLE_RATE as usize,
-            songbird::constants::SAMPLE_RATE_RAW,
-            1024,
-            1,
-            2,
-            FixedSync::Input,
-        )
-        .unwrap();
-    }
-
-    fn new() -> EmittedSink {
-        // 通過將 sync_channel 的限制設定為至少一次重新取樣步驟的輸出幀大小
-        // （在我們的頻率設定下，區塊大小為 1024 時為 1120），
-        // 可以減少 EmittedSink::write 和 EmittedSink::read 之間所需的同步次數。
+    // 把 fn new() 改成 pub fn new()
+    pub fn new() -> EmittedSink {
         let (sender, receiver) = sync_channel::<[f32; 2]>(1120);
 
         let resampler = Fft::<f32>::new(
@@ -94,7 +78,7 @@ impl EmittedSink {
             2,
             FixedSync::Input,
         )
-        .unwrap();
+            .unwrap();
 
         let resampler_input_frames_needed = resampler.input_frames_max();
 
@@ -107,6 +91,43 @@ impl EmittedSink {
             ])),
             resampler: Arc::new(Mutex::new(resampler)),
             resampler_input_frames_needed,
+        }
+    }
+
+
+    pub fn reset(&mut self) {
+        // 清理 input buffer
+        if let Ok(mut input_buffer) = self.input_buffer.try_lock() {
+            input_buffer[0].clear();
+            input_buffer[1].clear();
+        } else {
+            println!("[EmittedSink] 警告：無法鎖定 input_buffer，跳過清理");
+        }
+
+        // 清空 receiver（忽略錯誤）
+        if let Ok(receiver) = self.receiver.try_lock() {
+            // Disconnected 錯誤是正常的，表示 sender 已關閉
+            while let Ok(_) = receiver.try_recv() {}
+        } else {
+            println!("[EmittedSink] 警告：無法鎖定 receiver，跳過清理");
+
+        }
+
+        // 重建 resampler
+        if let Ok(mut resampler) = self.resampler.try_lock() {
+            match Fft::<f32>::new(
+                librespot::playback::SAMPLE_RATE as usize,
+                songbird::constants::SAMPLE_RATE_RAW,
+                1024,
+                1,
+                2,
+                FixedSync::Input,
+            ) {
+                Ok(new_resampler) => *resampler = new_resampler,
+                Err(e) => println!("[EmittedSink] 警告：無法創建 resampler: {:?}", e),
+            }
+        } else {
+            println!("[EmittedSink] 警告：無法鎖定 resampler，跳過重建");
         }
     }
 }
@@ -290,9 +311,63 @@ impl Clone for EmittedSink {
 
 
 impl SpotifyPlayer {
+    pub fn on_connection_change<F>(&self, callback: F) -> Option<tokio::task::JoinHandle<()>>
+    where
+        F: Fn(bool, &str) + Send + 'static,  // (is_connected, user_name)
+    {
+        let mut event_channel = self.get_event_channel()?;
 
+        Some(tokio::spawn(async move {
+            while let Some(event) = event_channel.recv().await {
+                match event {
+                    PlayerEvent::SessionConnected { user_name, .. } => {
+                        callback(true, &user_name);
+                    }
+                    PlayerEvent::SessionDisconnected { user_name, .. } => {
+                        callback(false, &user_name);
+                    }
+                    _ => {}
+                }
+            }
+        }))
+    }
     pub fn get_event_channel(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<PlayerEvent>> {
         self.player.as_ref().map(|p| p.get_player_event_channel())
+    }
+    // 新增：啟動事件監聽器
+    pub fn start_event_listener(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let mut event_channel = self.get_event_channel()?;
+
+        Some(tokio::spawn(async move {
+            while let Some(event) = event_channel.recv().await {
+                match event {
+                    PlayerEvent::SessionConnected { connection_id, user_name } => {
+                        println!("✓ 使用者已連線！");
+                        println!("  - 使用者: {}", user_name);
+                        println!("  - Connection ID: {}", connection_id);
+                        // 在這裡做你想做的事，例如開啟音響
+                    }
+                    PlayerEvent::SessionDisconnected { connection_id, user_name } => {
+                        println!("✗ 使用者已斷線");
+                        println!("  - 使用者: {}", user_name);
+                        println!("  - Connection ID: {}", connection_id);
+                        // 在這裡做你想做的事，例如關閉音響
+                    }
+                    PlayerEvent::Playing { track_id, position_ms, .. } => {
+                        println!("▶ 正在播放: {:?} @ {}ms", track_id, position_ms);
+                    }
+                    PlayerEvent::Paused { track_id, position_ms, .. } => {
+                        println!("⏸ 已暫停: {:?} @ {}ms", track_id, position_ms);
+                    }
+                    PlayerEvent::Stopped { track_id, .. } => {
+                        println!("⏹ 已停止: {:?}", track_id);
+                    }
+                    // 其他事件可以忽略或處理
+                    _ => {}
+                }
+            }
+            println!("[Event Listener] 事件通道已關閉");
+        }))
     }
     pub async fn re_auth(
         cache_dir: Option<String>,
@@ -474,81 +549,46 @@ impl SpotifyPlayer {
             last_disconnect_time: None,
         }
     }
-    pub async fn enable_connect(&mut self) -> bool {  // 返回 bool 表示是否重新創建了 Player
-
-        // 檢查 Spirc 是否已經存在
-        if let Some(spirc) = &self.spirc {
-            // 檢查是否長時間未使用 (超過 1 小時)
-            const STALE_THRESHOLD_SECS: u64 = 3600; // 1 小時
-            let should_rebuild = if let Some(last_disconnect) = self.last_disconnect_time {
-                let elapsed = last_disconnect.elapsed().as_secs();
-                if elapsed > STALE_THRESHOLD_SECS {
-                    println!("[Spirc] Spirc 已閒置 {} 秒（超過 {} 秒），強制重建以避免狀態不同步",
-                             elapsed, STALE_THRESHOLD_SECS);
-                    true
-                } else {
-                    println!("[Spirc] Spirc 閒置 {} 秒，嘗試重新啟用 (activate)...", elapsed);
-                    false
-                }
-            } else {
-                // 沒有 disconnect 記錄，說明剛創建不久，直接 activate
-                println!("[Spirc] Spirc 實例已存在，嘗試重新啟用 (activate)...");
-                false
-            };
-
-            if should_rebuild {
-                // 長時間未使用，強制重建
-                println!("[Spirc] 準備重建 Spirc...");
-                self.spirc.take();
-                // 繼續往下走，執行重建邏輯
-            } else {
-                // 短時間內重新啟用，嘗試 activate
-                self.emitted_sink.reset();
-                match spirc.activate() {
-                    Ok(_) => {
-                        println!("[Spirc] ✓ 成功 activate");
-                        self.last_disconnect_time = None; // 清除斷開時間
-                        return false; // Player 和 Spirc 沒有重新創建
-                    }
-                    Err(e) => {
-                        println!("[Spirc] ✗ activate 失敗: {:?}。將嘗試重建 Spirc。", e);
-                        // 故意讓 spirc 變 None 來觸發重建
-                        self.spirc.take();
-                        // 繼續往下走，執行重建邏輯
-                    }
-                }
-            }
+    pub async fn enable_connect(&mut self) -> bool {
+        // 如果 Spirc 已存在，先清理
+        if let Some(spirc) = self.spirc.take() {
+            println!("[Spirc] 關閉舊的 Spirc...");
+            let _ = spirc.shutdown();
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
-        // Spirc 不存在 (首次運行, 或 activate 失敗)
-        println!("[Spirc] 準備創建新的 Spirc 實例 (首次)...");
+        // ========== 關鍵：創建全新的 Session ==========
+        println!("[Spirc] 創建新的 Session...");
+        let cache = Cache::new(
+            self._cache_dir.clone(),
+            self._cache_dir.clone(),
+            self._cache_dir.clone(),
+            Some(4 * 1024 * 1024 * 1024), // 4GB
+        ).ok();
 
-        // 確保 Sink 是乾淨的
+        self.session = Session::new(SessionConfig::default(), cache);
+        // ============================================
+
+        // 重設 Sink
         self.emitted_sink.reset();
 
-        // Spirc::new 需要一個 Arc<Player>。
-        // 我們在 new() 中已經創建了 player，所以這裡我們 clone 它。
-        let player_arc = if self.player.is_some() {
-            self.player.as_ref().unwrap().clone()
-        } else {
-            // 這不應該發生, 但作為防禦
-            println!("[Spirc] 警告: Player 為 None，重新創建一個");
-            let player_config = PlayerConfig { bitrate: self.quality, ..Default::default() };
-            let cloned_sink = self.emitted_sink.clone();
-            let new_player = Player::new(
-                player_config,
-                self.session.clone(),
-                self.mixer.get_soft_volume(),
-                move || Box::new(cloned_sink),
-            );
-            self.player = Some(new_player.clone());
-            new_player
+        // 創建新的 Player（必須用新的 Session）
+        println!("[Spirc] 創建新的 Player...");
+        let player_config = PlayerConfig {
+            bitrate: self.quality,
+            ..Default::default()
         };
+        let cloned_sink = self.emitted_sink.clone();
+        let new_player = Player::new(
+            player_config,
+            self.session.clone(),  // 使用新的 Session
+            self.mixer.get_soft_volume(),
+            move || Box::new(cloned_sink),
+        );
+        self.player = Some(new_player.clone());
 
-        println!("[Spirc] ✓ 使用現有的 Player 和 Session");
-
-        // 創建 Spirc
-        println!("[Spirc] 創建 ConnectConfig，裝置名稱: {}", self.device_name);
+        // 創建新的 Spirc
+        println!("[Spirc] 創建新的 Spirc，裝置名稱: {}", self.device_name);
         let config = ConnectConfig {
             name: self.device_name.clone(),
             device_type: DeviceType::AudioDongle,
@@ -558,16 +598,15 @@ impl SpotifyPlayer {
             volume_steps: 64,
         };
 
-        println!("[Spirc] 調用 Spirc::new()...");
         match Spirc::new(
             config,
-            self.session.clone(), // 重用 session
-            self.credentials.clone(), // 重用 credentials
-            player_arc, // 使用上面獲取的 player Arc
+            self.session.clone(),
+            self.credentials.clone(),
+            new_player,
             self.mixer.clone(),
         ).await {
             Ok((spirc, task)) => {
-                println!("[Spirc] ✓ Spirc::new() 成功");
+                println!("[Spirc] ✓ Spirc 創建成功");
 
                 tokio::spawn(async move {
                     println!("[Spirc] Spirc task 開始運行");
@@ -576,35 +615,32 @@ impl SpotifyPlayer {
                 });
 
                 self.spirc = Some(Box::new(spirc));
-                self.last_disconnect_time = None; // 清除斷開時間
-                println!("[Spirc] ✓ Spotify Connect 已成功啟用");
-                println!("[Spirc] 現在可以在 Spotify 應用中看到裝置: '{}'", self.device_name);
+                self.last_disconnect_time = None;
+                println!("[Spirc] ✓ Spotify Connect 已啟用: '{}'", self.device_name);
+                true
             }
             Err(e) => {
-                println!("[Spirc] ✗ 無法創建 Spirc: {:?}", e);
-                println!("[Spirc] 詳細錯誤訊息: {}", e);
-                self.spirc = None; // 確保 spirc 是 None
+                println!("[Spirc] ✗ Spirc 創建失敗: {:?}", e);
+                self.spirc = None;
+                false
             }
         }
-
-        true // Spirc 和 Task 被創建了 (或重建了)
     }
     pub async fn disable_connect(&mut self) {
-        // 我們 *不* `take()` spirc，我們保留它以便重用
-        if let Some(spirc) = self.spirc.as_ref() {
-            println!("[Spirc] 斷開 (disconnect) Spirc...");
+        if let Some(spirc) = self.spirc.take() {  // 使用 take() 移除
+            println!("[Spirc] 關閉 Spirc...");
 
-            // 根據使用者的要求，我們使用 `disconnect` 而不是 `shutdown`
-            // `disconnect(true)` 會暫停播放並斷開連接
-            spirc.disconnect(true).expect("Failed to send disconnect command");
+            // 使用 shutdown 完全關閉，而不是 disconnect
+            if let Err(e) = spirc.shutdown() {
+                println!("[Spirc] shutdown 錯誤: {:?}", e);
+            }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-            // 記錄斷開時間
-            self.last_disconnect_time = Some(Instant::now());
+            // 等待關閉完成
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
-        // 我們不再設置 self.spirc = None
-        println!("[Spirc] Spirc 已斷開 (但實例被保留)");
+
+        self.last_disconnect_time = Some(Instant::now());
+        println!("[Spirc] ✓ Spotify Connect 已停用");
     }
 }
 
