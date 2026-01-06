@@ -8,7 +8,7 @@ set -e
 
 # 配置檔案路徑
 CONFIG_FILE="./config.encrypted.conf"
-EXECUTABLE="./target/release/aoede"
+EXECUTABLE="./aoede"
 
 # 顏色定義
 RED='\033[0;31m'
