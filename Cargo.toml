@@ -13,7 +13,7 @@ categories = ["multimedia::audio"]
 [dependencies]
 # 移除原本的 librespot，改用 patch 版本
 librespot = {version = "0.8.0", default-features = false, features = ["with-dns-sd","native-tls",]}
-songbird = { git = "https://github.com/beerpsi-forks/songbird.git", branch = "davey", features = ["serenity", "driver", "gateway", "rustls"] }
+songbird = { version = "0.5", features = ["serenity", "driver", "gateway", "rustls"] }
 symphonia = { version = "0.5.5", features = ["all"] }
 rustls = { version = "0.23", features = ["ring"] }
 tracing-subscriber = "0.3"
