@@ -99,7 +99,10 @@ jobs:
 
   build-windows:
     name: Build Windows desktop app (unsigned)
-    runs-on: windows-latest
+    # 鎖定 windows-2022（而非會浮動的 windows-latest）：目前的 windows-latest
+    # image 帶了太新的 Visual Studio 工具鏈，aws-lc-sys 的 build script 認不出
+    # 它的 CMake generator，會導致 C11 atomics 編譯測試失敗。
+    runs-on: windows-2022
     permissions:
       contents: write
 

@@ -46,8 +46,12 @@ jobs:
             script_name: start.sh
 
           # Windows x86_64
+          # 鎖定 windows-2022（而非會浮動的 windows-latest）：目前的
+          # windows-latest image 帶了太新的 Visual Studio 工具鏈，
+          # aws-lc-sys 的 build script 認不出它的 CMake generator，
+          # 會導致 C11 atomics 編譯測試失敗。
           - name: Windows x86_64 (MSVC)
-            os: windows-latest
+            os: windows-2022
             target: x86_64-pc-windows-msvc
             artifact_name: aoede-windows-x86_64
             binary_name: aoede.exe
