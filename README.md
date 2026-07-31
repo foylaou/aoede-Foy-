@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="250" height="250" src="https://raw.githubusercontent.com/codetheweb/aoede/main/src/ui/src-tauri/icons/icon.png">
+  <img width="250" height="250" src="https://raw.githubusercontent.com/foylaou/aoede-Foy-/refs/heads/main/src/ui/src-tauri/icons/icon.png">
 </p>
 
 Aoede 是一個可以**直接**從 **Spotify 串流到 Discord** 的 Discord 音樂機器人。唯一的操作介面就是 Spotify 本身。
