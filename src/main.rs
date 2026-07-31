@@ -3,6 +3,7 @@ use std::process::exit;
 
 use lib::config::Config;
 use songbird::{SerenityInit};
+use songbird::tracks::TrackHandle;
 
 mod lib {
     pub mod config;
@@ -40,6 +41,9 @@ struct EventHandlerState {
     handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+// 確保「Spotify 自動重連看門狗」只會被啟動一次
+static WATCHDOG_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // 用於在 serenity 的 TypeMap 中存儲 Poise 數據
 struct PoiseDataKey;
 impl serenity::prelude::TypeMapKey for PoiseDataKey {
@@ -56,6 +60,24 @@ impl EventHandler for Handler {
 
         let player = poise_data.player.clone();
         let config = &poise_data.config;
+
+        // 啟動「Spotify 自動重連看門狗」（只需一次）：當 Spirc 因網路問題
+        // 非預期結束時，自動嘗試重新建立 Spotify Connect，不需要等使用者
+        // 手動離開/重新加入語音頻道，也不需要重開整個專案。
+        // 由 SPOTIFY_AUTO_RECONNECT 環境變數控制是否開啟，預設關閉。
+        if config.spotify_auto_reconnect
+            && !WATCHDOG_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let watchdog_ctx = ctx.clone();
+            let watchdog_player = player.clone();
+            let watchdog_state = event_handler_state.clone();
+            let discord_user_id = config.discord_user_id;
+
+            tokio::spawn(async move {
+                spotify_watchdog_loop(watchdog_ctx, watchdog_player, watchdog_state, discord_user_id).await;
+            });
+            println!("✓ Spotify 自動重連看門狗已啟動（SPOTIFY_AUTO_RECONNECT=true）");
+        }
 
         // 處理機器人啟動時使用者已在語音頻道中的情況
         let user_in_voice = guilds.iter().any(|guild_id| {
@@ -190,6 +212,15 @@ impl EventHandler for Handler {
 async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) {
     println!("事件處理器已啟動");
 
+    // 保留目前的 Songbird 音軌控制代碼，讓「暫停/恢復」可以直接對同一個音軌
+    // 呼叫 pause()/play()，而不是每次都 stop() 並重建音軌。
+    //
+    // 這是修正「暫停數分鐘後恢復會加速播放」的關鍵：Songbird 的即時排程器在
+    // 音軌狀態為 Pause 時完全不會呼叫音源的 read()（見 should_check_input()），
+    // 若沒有正確暫停音軌，read() 會在暫停期間持續阻塞，導致排程器的節奏基準
+    // （deadline）落後真實時間，恢復播放時就會不計間隔地「追趕」，聽起來像加速。
+    let mut current_track: Option<TrackHandle> = None;
+
     let mut receiver = {
         let player_lock = player.lock().await;
         if let Some(ref p) = player_lock.player {
@@ -280,6 +311,8 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
             PlayerEvent::Stopped { .. } => {
                 println!("⏹️ Spotify 已停止播放");
                 ctx.set_presence(None, user::OnlineStatus::Online);
+                // 曲目已結束，舊音軌不再有效，下一首會重新建立
+                current_track = None;
                 // 不離開頻道，等待 SessionDisconnected 事件
                 println!("ℹ️ 保持在語音頻道中，等待 Spotify 斷線或下一首...");
             }
@@ -287,6 +320,8 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
             PlayerEvent::Loading { .. } => {
                 println!("🔄 Spotify 正在載入音樂, 重設音訊接收器...");
                 player.lock().await.emitted_sink.reset();
+                // 新曲目即將開始，舊音軌不再有效，強制下一次 Playing 事件重建音軌
+                current_track = None;
                 println!("✓ 音訊接收器已重設");
                 continue;
             }
@@ -418,28 +453,59 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
                     manager.get(guild_id)
                 };
 
+                // 若目前持有一個因暫停而保留的音軌，代表這是「恢復播放」而非新曲目，
+                // 直接 resume 既有音軌即可，避免不必要地 stop()/重建音訊源
+                // （長時間暫停後重建也無法解決加速播放問題，關鍵在於暫停期間
+                // 完全不觸碰音軌，見上方 PlayerEvent::Paused 的說明）。
+                let mut resumed = false;
+                if let Some(handle) = current_track.as_ref() {
+                    match handle.play() {
+                        Ok(()) => {
+                            println!("▶️ 偵測到暫停中的音軌，已直接恢復播放（未重建音軌）");
+                            resumed = true;
+                        }
+                        Err(e) => {
+                            println!("⚠️ 恢復播放失敗，將重新建立音軌: {:?}", e);
+                            current_track = None;
+                        }
+                    }
+                }
+
                 // 播放音訊
-                if let Some(handler_lock) = handler_lock {
-                    let mut handler = handler_lock.lock().await;
-                    handler.stop();
+                if !resumed {
+                    if let Some(handler_lock) = handler_lock {
+                        let mut handler = handler_lock.lock().await;
+                        handler.stop();
 
-                    println!("🎵 準備音訊源...");
-                    use songbird::input::{Input, RawAdapter};
-                    let source: Input = RawAdapter::new(
-                        player.lock().await.emitted_sink.clone(),
-                        48000,
-                        2,
-                    ).into();
+                        println!("🎵 準備音訊源...");
+                        use songbird::input::{Input, RawAdapter};
+                        let source: Input = RawAdapter::new(
+                            player.lock().await.emitted_sink.clone(),
+                            48000,
+                            2,
+                        ).into();
 
-                    handler.set_bitrate(songbird::driver::Bitrate::Auto);
-                    let track_handle = handler.play_input(source);
-                    println!("✓ 開始播放音訊，軌道 UUID: {:?}", track_handle.uuid());
+                        handler.set_bitrate(songbird::driver::Bitrate::Auto);
+                        let track_handle = handler.play_input(source);
+                        println!("✓ 開始播放音訊，軌道 UUID: {:?}", track_handle.uuid());
+                        current_track = Some(track_handle);
+                    }
                 }
             }
 
             PlayerEvent::Paused { .. } => {
                 println!("⏸️ Spotify 已暫停");
                 ctx.set_presence(None, user::OnlineStatus::Online);
+
+                // 同步暫停 Discord 音軌，讓 Songbird 排程器在暫停期間完全跳過
+                // 讀取音源，避免長時間暫停後恢復時出現加速播放的問題。
+                if let Some(handle) = current_track.as_ref() {
+                    if let Err(e) = handle.pause() {
+                        println!("⚠️ 暫停 Discord 音軌失敗: {:?}", e);
+                    } else {
+                        println!("⏸️ 已同步暫停 Discord 音軌");
+                    }
+                }
                 // 保持在頻道中
             }
 
@@ -456,6 +522,64 @@ async fn handle_spotify_events(ctx: Context, player: Arc<Mutex<SpotifyPlayer>>) 
     }
 
     println!("事件處理器已結束");
+}
+
+// Spotify 自動重連看門狗：等待 SpotifyPlayer 通知「Spirc 非預期結束」
+// （例如 librespot-org/librespot#1419 那類網路/dealer TLS 問題），
+// 若使用者當下仍在語音頻道中，就自動嘗試重新建立 Spotify Connect。
+async fn spotify_watchdog_loop(
+    ctx: Context,
+    player: Arc<Mutex<SpotifyPlayer>>,
+    event_handler_state: Arc<Mutex<EventHandlerState>>,
+    discord_user_id: u64,
+) {
+    loop {
+        let notify = player.lock().await.spirc_watchdog();
+        notify.notified().await;
+
+        println!("🐕 [看門狗] 偵測到 Spirc 非預期結束，準備嘗試自動重連...");
+
+        // 稍等一下再重試，避免在網路仍不穩定時立刻重試又立刻失敗
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+        let user_in_voice = ctx.cache.guilds().iter().any(|guild_id| {
+            ctx.cache
+                .guild(*guild_id)
+                .and_then(|guild| {
+                    guild
+                        .voice_states
+                        .get(&discord_user_id.into())
+                        .and_then(|voice_state| voice_state.channel_id)
+                })
+                .is_some()
+        });
+
+        if !user_in_voice {
+            println!("🐕 [看門狗] 使用者目前不在語音頻道中，暫不自動重連");
+            continue;
+        }
+
+        let player_recreated = player.lock().await.enable_connect().await;
+
+        if player_recreated {
+            println!("🐕 [看門狗] Player 已重新創建，重設事件處理器...");
+
+            let mut handler_state = event_handler_state.lock().await;
+            if let Some(handle) = handler_state.handle.take() {
+                handle.abort();
+            }
+
+            let c = ctx.clone();
+            let player_clone = player.clone();
+            let new_handle = tokio::spawn(async move {
+                handle_spotify_events(c, player_clone).await;
+            });
+            handler_state.handle = Some(new_handle);
+            println!("🐕 [看門狗] ✓ 已自動重連並重設事件處理器");
+        } else {
+            println!("🐕 [看門狗] ✗ 自動重連失敗，將等待下一次非預期結束通知再試");
+        }
+    }
 }
 
 // Poise 命令函數
@@ -483,6 +607,9 @@ async fn help(
 
 #[tokio::main]
 async fn main() {
+    // 載入 .env（若不存在則忽略）
+    dotenvy::dotenv().ok();
+
     // 初始化 rustls 加密提供者
     rustls::crypto::ring::default_provider()
         .install_default()

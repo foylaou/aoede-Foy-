@@ -19,6 +19,9 @@ pub struct Config {
     #[serde(alias = "CACHE_DIR")]
     #[serde(default = "default_cache_dir")]
     pub cache_dir: String,
+    #[serde(alias = "SPOTIFY_AUTO_RECONNECT")]
+    #[serde(default = "default_false")]
+    pub spotify_auto_reconnect: bool,
 }
 fn default_false() -> bool {
     false

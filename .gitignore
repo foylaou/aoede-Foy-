@@ -4,6 +4,8 @@
 # IDE files
 .vscode/
 
+data/
+.idea/
 # Spotify authentication
 credentials.json
 aoede-cache/

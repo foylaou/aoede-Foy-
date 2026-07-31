@@ -1,0 +1,98 @@
+name: Build desktop app (Tauri)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build, sign & notarize macOS app (Apple Silicon)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-app-aarch64-apple-darwin
+
+      # 跟 build-binaries-for-release.yml 的 macOS 依賴設定保持一致
+      - name: Install system dependencies
+        run: |
+          brew install pkg-config opus cmake
+          HOMEBREW_PREFIX=$(brew --prefix)
+          echo "PKG_CONFIG_PATH=$HOMEBREW_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "OPUS_LIB_DIR=$HOMEBREW_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "OPUS_INCLUDE_DIR=$HOMEBREW_PREFIX/include" >> "$GITHUB_ENV"
+          echo "OPUS_STATIC=1" >> "$GITHUB_ENV"
+          echo "CFLAGS=-I$HOMEBREW_PREFIX/include -arch arm64" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$HOMEBREW_PREFIX/lib -arch arm64" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-C link-arg=-L$HOMEBREW_PREFIX/lib" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: src/ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: src/ui
+        run: npm ci
+
+      - name: Build aoede bot binary (release)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Stage aoede as the Tauri sidecar
+        run: |
+          mkdir -p src/ui/src-tauri/binaries
+          cp target/aarch64-apple-darwin/release/aoede \
+             src/ui/src-tauri/binaries/aoede-aarch64-apple-darwin
+
+      # 標準做法：把 .p12 憑證匯入一個暫時的 keychain，簽署時才找得到。
+      # APPLE_CERTIFICATE 是 .p12 檔案 base64 編碼後的內容，
+      # APPLE_CERTIFICATE_PASSWORD 是匯出 .p12 時設定的密碼。
+      - name: Import Apple Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Build, sign & notarize the desktop app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: src/ui
+          args: --target aarch64-apple-darwin
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Aoede Desktop ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false

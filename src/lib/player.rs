@@ -20,7 +20,7 @@ use librespot::playback::{
 
 
 
-use std::sync::{ atomic::{AtomicUsize, Ordering}};
+use std::sync::{ atomic::{AtomicBool, AtomicUsize, Ordering}};
 use librespot::discovery::Discovery;
 
 use std::clone::Clone;
@@ -38,8 +38,6 @@ use symphonia::core::io::MediaSource;
 use lazy_static::lazy_static;
 
 use std::mem::size_of;
-use log::debug;
-use tracing_subscriber::fmt::format::debug_fn;
 
 pub struct SpotifyPlayer {
 
@@ -54,6 +52,10 @@ pub struct SpotifyPlayer {
     _cache_dir: Option<String>,
     quality: Bitrate,
     last_disconnect_time: Option<Instant>,
+    // Spirc 背景任務非預期結束時會被通知，供外部（main.rs）接手做自動重連
+    spirc_watchdog: Arc<tokio::sync::Notify>,
+    // 標記「接下來的 Spirc 結束是我們自己叫它關的」，避免主動關閉時誤觸看門狗
+    expecting_shutdown: Arc<AtomicBool>,
 }
 
 pub struct EmittedSink {
@@ -547,12 +549,20 @@ impl SpotifyPlayer {
             _cache_dir: cache_dir_for_reauth,
             quality,
             last_disconnect_time: None,
+            spirc_watchdog: Arc::new(tokio::sync::Notify::new()),
+            expecting_shutdown: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 取得看門狗通知器：當 Spirc 背景任務非預期結束（例如網路問題）時會被通知一次。
+    pub fn spirc_watchdog(&self) -> Arc<tokio::sync::Notify> {
+        self.spirc_watchdog.clone()
     }
     pub async fn enable_connect(&mut self) -> bool {
         // 如果 Spirc 已存在，先清理
         if let Some(spirc) = self.spirc.take() {
             println!("[Spirc] 關閉舊的 Spirc...");
+            self.expecting_shutdown.store(true, Ordering::SeqCst);
             let _ = spirc.shutdown();
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
@@ -608,10 +618,23 @@ impl SpotifyPlayer {
             Ok((spirc, task)) => {
                 println!("[Spirc] ✓ Spirc 創建成功");
 
+                // 這次是我們主動要求啟動，之後若 task 結束就是「非預期」，直到下次
+                // enable_connect()/disable_connect() 主動關閉時才會再次標記為預期中。
+                self.expecting_shutdown.store(false, Ordering::SeqCst);
+                let watchdog = self.spirc_watchdog.clone();
+                let expecting_shutdown = self.expecting_shutdown.clone();
+
                 tokio::spawn(async move {
                     println!("[Spirc] Spirc task 開始運行");
                     task.await;
                     println!("[Spirc] Spirc task 結束");
+
+                    // swap 成 false：如果原本是 true（我們主動關閉），這裡就不通知看門狗；
+                    // 如果原本是 false（沒人叫它關），代表是網路等問題導致非預期結束。
+                    if !expecting_shutdown.swap(false, Ordering::SeqCst) {
+                        println!("[Spirc] ⚠️ Spirc 非預期結束（可能是網路問題），通知看門狗");
+                        watchdog.notify_one();
+                    }
                 });
 
                 self.spirc = Some(Box::new(spirc));
@@ -629,6 +652,7 @@ impl SpotifyPlayer {
     pub async fn disable_connect(&mut self) {
         if let Some(spirc) = self.spirc.take() {  // 使用 take() 移除
             println!("[Spirc] 關閉 Spirc...");
+            self.expecting_shutdown.store(true, Ordering::SeqCst);
 
             // 使用 shutdown 完全關閉，而不是 disconnect
             if let Err(e) = spirc.shutdown() {

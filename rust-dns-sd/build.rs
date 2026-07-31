@@ -6,7 +6,13 @@ fn get_target() -> String {
 // dns-sd-patch/build.rs 的內容 (大部分會被以下程式碼替換或註釋)
 
 fn main() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     // === 這是我們手動添加的 Windows/MSVC 專用連結邏輯 ===
+    if target_os == "macos" {
+        // 在 macOS 上，直接指定連結系統內建的 dns_sd
+        println!("cargo:rustc-link-lib=dns_sd");
+        return;
+    }
     // 檢查目標是否為 Windows MSVC
     if std::env::var("TARGET").unwrap().contains("windows-msvc") {
         // 假設 SDK 位於 C:\BonjourSDK (這是您修復後的路徑)
