@@ -140,6 +140,16 @@ pub fn start(app: &AppHandle, state: &BotState) -> Result<(), String> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // Windows 上就算把 stdout/stderr 重導向，spawn 一個 console 子進程
+    // 還是會另外彈出一個黑色 console 視窗（這是 CreateProcess 的預設行為，
+    // 跟輸出重導向無關）。用 CREATE_NO_WINDOW 把它關掉。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let mut child = cmd.spawn().map_err(|e| format!("啟動 aoede 失敗: {e}"))?;
 
     // 新的一次執行，邀請連結要等下面重新印出來才會知道，先清掉舊的。
