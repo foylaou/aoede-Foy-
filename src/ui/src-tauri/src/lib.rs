@@ -190,8 +190,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            // macOS：視窗被 hide() 之後，點 Dock 圖示會發出 Reopen 事件，
+            // macOS 專屬：視窗被 hide() 之後，點 Dock 圖示會發出 Reopen 事件，
             // 這裡負責把視窗重新顯示出來，不然點了會沒有任何反應。
+            // 這個 RunEvent 變體只在 macOS 上存在，Linux/Windows 編譯時
+            // 完全沒有這個 enum variant，所以要用 cfg 包起來。
+            #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
                 has_visible_windows, ..
             } => {
