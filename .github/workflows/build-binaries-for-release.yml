@@ -1,9 +1,6 @@
 name: Build binaries for release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       platforms:
