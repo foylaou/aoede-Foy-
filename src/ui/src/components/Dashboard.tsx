@@ -5,6 +5,7 @@ import {
   getAuthStatus,
   getInviteUrl,
   getStatus,
+  readConfig,
   restartBot,
   startBot,
   stopBot,
@@ -21,10 +22,19 @@ export default function Dashboard() {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [authHint, setAuthHint] = useState<string | null>(null);
+  const [configReady, setConfigReady] = useState<boolean | null>(null);
 
   useEffect(() => {
     getStatus().then(setStatus).catch(() => {});
     getInviteUrl().then(setInviteUrl).catch(() => {});
+    readConfig()
+      .then((config) =>
+        setConfigReady(
+          config.discordToken.trim() !== "" &&
+            config.discordUserId.trim() !== "",
+        ),
+      )
+      .catch(() => setConfigReady(false));
 
     const unlistenStatus = listen<string>("bot-status", (event) => {
       setStatus(event.payload as BotStatus);
@@ -99,7 +109,7 @@ export default function Dashboard() {
 
       <div className="button-row">
         <button
-          disabled={busy || status === "running"}
+          disabled={busy || status === "running" || configReady === false}
           onClick={() => run(startBot)}
         >
           啟動
@@ -110,10 +120,19 @@ export default function Dashboard() {
         >
           停止
         </button>
-        <button disabled={busy} onClick={() => run(restartBot)}>
+        <button
+          disabled={busy || configReady === false}
+          onClick={() => run(restartBot)}
+        >
           重新啟動
         </button>
       </div>
+
+      {configReady === false && (
+        <p className="hint-text">
+          尚未設定 Discord Token / User ID，請先到「設定」分頁填寫必填欄位才能啟動。
+        </p>
+      )}
 
       {error && <p className="error-text">{error}</p>}
 
@@ -143,7 +162,9 @@ export default function Dashboard() {
           </span>
         </div>
         {authenticated === false && (
-          <button onClick={handleAuthenticate}>取得認證</button>
+          <button disabled={configReady === false} onClick={handleAuthenticate}>
+            取得認證
+          </button>
         )}
         {authHint && <p className="hint-text">{authHint}</p>}
       </div>

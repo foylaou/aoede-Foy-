@@ -229,3 +229,34 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.about-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.about-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+}
+
+.about-title {
+  margin: 0 0 4px;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.license-text {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+}

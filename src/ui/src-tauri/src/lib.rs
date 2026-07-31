@@ -57,6 +57,13 @@ fn write_config(app: AppHandle, config: config::AoedeConfig) -> Result<(), Strin
     config::write_config(&app, config)
 }
 
+// 用 include_str! 在編譯時把 LICENSE 內容直接嵌進執行檔，正式打包後
+// 不需要依賴專案原始碼目錄還存在（跟 process.rs 裡路徑可攜性的考量一致）。
+#[tauri::command]
+fn get_license_text() -> &'static str {
+    include_str!("../../../../LICENSE")
+}
+
 #[tauri::command]
 fn export_logs(app: AppHandle, state: State<BotState>) -> Result<Option<String>, String> {
     let lines = process::log_snapshot(&state);
@@ -163,6 +170,7 @@ pub fn run() {
             read_config,
             write_config,
             export_logs,
+            get_license_text,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;

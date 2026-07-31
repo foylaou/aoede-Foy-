@@ -92,25 +92,21 @@ pub fn is_authenticated(app: &AppHandle) -> bool {
 }
 
 /// - debug 模式：假設 aoede 已經在專案根目錄用 `cargo build` 編過。
-/// - release 模式：aoede 是跟主程式放在同一個目錄的 Tauri sidecar，
-///   檔名帶 target triple 後綴（對應 tauri.conf.json 的 bundle.externalBin，
-///   打包時 Tauri 會把 `binaries/aoede-<target-triple>` 一起放進 app 裡）。
+/// - release 模式：aoede 是跟主程式放在同一個目錄的 Tauri sidecar。
+///   打包前 `binaries/aoede-<target-triple>` 的後綴只是給 bundler 用來
+///   分辨要打包哪個平台的版本，實際塞進 .app 裡之後 Tauri 會把後綴拿掉，
+///   變成單純的 `aoede`（跟 tauri.conf.json 的 bundle.externalBin 宣告的
+///   base name 一致，也是 Contents/MacOS/ 底下實際看到的檔名）。
 fn aoede_binary_path() -> PathBuf {
+    let exe_name = if cfg!(windows) { "aoede.exe" } else { "aoede" };
+
     if cfg!(debug_assertions) {
-        let exe_name = if cfg!(windows) { "aoede.exe" } else { "aoede" };
         return repo_root().join("target").join("debug").join(exe_name);
     }
 
-    let target_triple = env!("TAURI_ENV_TARGET_TRIPLE");
-    let exe_name = if cfg!(windows) {
-        format!("aoede-{target_triple}.exe")
-    } else {
-        format!("aoede-{target_triple}")
-    };
-
     std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(&exe_name)))
+        .and_then(|exe| exe.parent().map(|dir| dir.join(exe_name)))
         .unwrap_or_else(|| PathBuf::from(exe_name))
 }
 
@@ -120,12 +116,19 @@ pub fn start(app: &AppHandle, state: &BotState) -> Result<(), String> {
         return Err("Bot 已經在執行中".to_string());
     }
 
+    let config = crate::config::read_config(app)?;
+    if config.discord_token.trim().is_empty() || config.discord_user_id.trim().is_empty() {
+        return Err("尚未設定 Discord Token / User ID，請先到「設定」分頁填寫必填欄位".to_string());
+    }
+
     let bin = aoede_binary_path();
     if !bin.exists() {
-        return Err(format!(
-            "找不到 aoede 執行檔：{}\n請先在專案根目錄執行 `cargo build`",
-            bin.display()
-        ));
+        let hint = if cfg!(debug_assertions) {
+            "請先在專案根目錄執行 `cargo build`"
+        } else {
+            "應用程式安裝可能不完整，請重新安裝"
+        };
+        return Err(format!("找不到 aoede 執行檔：{}\n{hint}", bin.display()));
     }
 
     let work_dir = working_dir(app);

@@ -16,3 +16,5 @@ export const getAuthStatus = () => invoke<boolean>("get_auth_status");
 export const readConfig = () => invoke<AoedeConfig>("read_config");
 export const writeConfig = (config: AoedeConfig) =>
   invoke<void>("write_config", { config });
+
+export const getLicenseText = () => invoke<string>("get_license_text");
